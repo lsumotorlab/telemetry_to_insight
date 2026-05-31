@@ -28,10 +28,9 @@ Raw CSV
    ↓
 [2] create_synthetic_lap.R                          → CSV with synthetic lap appended
    ↓
-[3] telemetry_load_and_summary_interactive.R        → lap statistics & trends
+[3] telemetry_lap_level_summary_interactive.R       → lap statistics & trends
    ↓
 [4] track_mapping_interactive.R                     → single-lap track maps
-    track_mapping_interactive_low_pass_filter.R     → same + Lateral G low-pass filter
    ↓
 [5] track_mapping_compare_interactive.R             → lap-to-lap comparison
 
@@ -159,11 +158,11 @@ synthetic_lap_interactive()
 
 ## Step 3 — Lap Statistics Summary
 
-**File:** `telemetry_load_and_summary_interactive.R`
+**File:** `telemetry_lap_level_summary_interactive.R`
 
 **Run:**
 ```r
-source("telemetry_load_and_summary_interactive.R")
+source("telemetry_lap_level_summary_interactive.R")
 run_telemetry_app()
 ```
 
@@ -177,8 +176,6 @@ run_telemetry_app()
 | Flip horizontal / vertical | Mirror track coordinates if needed |
 | Full throttle threshold | % gas above which a sample counts as "full throttle" |
 | Braking threshold | % brake above which a sample counts as "braking" |
-| Overlap Braking thresholds | Thresholds defining brake + throttle overlap while braking |
-| Overlap Accelerating thresholds | Thresholds defining brake + throttle overlap while accelerating |
 | Choose laps | Checkboxes to include/exclude individual laps |
 | Designate synthetic lap | Mark one lap as synthetic — it is excluded from summary statistics but shown in the lap table |
 
@@ -186,7 +183,7 @@ run_telemetry_app()
 
 | Tab | Contents |
 |-----|---------|
-| **Lap Statistics** | Per-lap table: lap time, full throttle %, braking %, avg/max/min speed, ABS %, TC %, overlap %. **Export CSV** button saves the displayed table. |
+| **Lap Statistics** | Per-lap table: lap time, full throttle %, braking %, brake/throttle overlap %, avg/max/min speed, ABS %, TC %, max lateral G, max accel G, max brake G. **Export CSV** button saves the displayed table. |
 | **Summary Statistics** | Mean, SD, Min, Max across all selected non-synthetic laps (statistics as rows, variables as columns). **Export CSV** button saves the displayed table. |
 | **Lap Trend** | Line chart of any metric across laps — useful for spotting fatigue or warm-up effects |
 
@@ -212,7 +209,11 @@ track_mapping_interactive()
 | Select lap | Choose which lap to display |
 | Flip horizontal / vertical | Mirror coordinates |
 | Select up to 4 plots | Choose plot types from the list below |
-| Brake / Throttle thresholds | Adjust what counts as braking or full throttle for the relevant plots |
+| Gear encoding | *(visible when Gear map is selected)* Remap raw gear values where 0=R, 1=N, 2–7 = gears 1–6 (Assetto Corsa encoding) |
+| Brake threshold | *(visible when Braking zones is selected)* Minimum brake input to count as braking |
+| Throttle threshold | *(visible when Full throttle zones is selected)* Minimum gas input to count as full throttle |
+| Lateral G low-pass cutoff (Hz) | *(visible when Lateral G map or Lateral G over time is selected)* Butterworth 2nd-order zero-phase filter applied to `accGHorizontal`. Range 0–20 Hz; set to 0 for the raw signal. A cutoff of 2–5 Hz captures intentional steering inputs; values above 5 Hz likely reflect suspension or road noise. |
+| Overlap thresholds | *(visible when Brake/Throttle Overlap is selected)* Separate throttle and brake thresholds defining what counts as simultaneous overlap |
 | Show hover data | Enable interactive tooltips on the map |
 
 ### Available plot types
@@ -220,7 +221,7 @@ track_mapping_interactive()
 | Plot | What is shown |
 |------|--------------|
 | Track outline | Plain track layout |
-| Speed map | Track coloured by speed (plasma palette) |
+| Speed map | Track coloured by speed (red–yellow–green gradient) |
 | Gear map | Track coloured by gear engaged |
 | Braking zones | Points where brake input exceeds threshold, coloured by brake pressure |
 | Full throttle zones | Points at full throttle, coloured by speed |
@@ -229,30 +230,10 @@ track_mapping_interactive()
 | TC activation points | Locations where traction control was triggered |
 | Elevation profile | Elevation vs. distance along the lap |
 | Track with elevation color | Track map coloured by elevation (cividis palette) |
-| Lateral G map | Track coloured by lateral acceleration (`accGHorizontal`). Blue = left cornering, red = right cornering. |
+| Lateral G map | Track coloured by lateral acceleration (`accGHorizontal`). Blue = left cornering, red = right cornering. Supports low-pass filtering. |
 | Longitudinal G map | Track coloured by longitudinal acceleration (`accGFrontal`). Green = accelerating, red = braking. |
-| Lateral G over time | Lateral acceleration (`accGHorizontal`) plotted as a time series over lap time. Blue = left, red = right. |
+| Lateral G over time | Lateral acceleration (`accGHorizontal`) plotted as a time series over lap time. Blue = left, red = right. Supports low-pass filtering. |
 | Steer over time | Steering input (`steer`) plotted as a time series over lap time. Blue = left, red = right. |
-
-### Step 4 Variant — Track Mapping with Low-Pass Filter
-
-**File:** `track_mapping_interactive_low_pass_filter.R`
-
-**Run:**
-```r
-source("track_mapping_interactive_low_pass_filter.R")
-track_mapping_interactive()
-```
-
-**Purpose:** Identical to Step 4, with one addition: the Lateral G map supports real-time low-pass filtering of the `accGHorizontal` signal to reduce sensor noise. Use this variant when G-force data is noisy.
-
-**Requires:** the `signal` package (`install.packages("signal")`).
-
-**Additional sidebar control (visible when Lateral G map is selected):**
-
-| Control | Description |
-|---------|-------------|
-| Lateral G low-pass cutoff (Hz) | Butterworth 4th-order zero-phase filter applied to `accGHorizontal`. Range 0–20 Hz; set to 0 for the raw signal. The sampling rate is inferred automatically from `lapTime`. The applied cutoff is shown as a subtitle on the plot. |
 
 ---
 
@@ -277,7 +258,8 @@ track_mapping_compare()
 | Reference lap | Which of A or B is the reference (delta = comparison − reference) |
 | Reference lap is synthetic | Labels the reference lap as synthetic in the plot titles |
 | Flip horizontal / vertical | Mirror coordinates |
-| Comparison attribute | The telemetry channel to compare (speed, RPM, gear, gas, brake, steer, ABS, TC) |
+| Comparison attribute | The telemetry channel to compare (speed, RPM, gear, gas, brake, steer, ABS, TC, lateral G, longitudinal G) |
+| Gear encoding | *(visible when Gear is selected)* Remap raw gear values where 0=R, 1=N, 2–7 = gears 1–6 |
 | Interpolation points | Resolution of the common lap axis used for delta calculation (default 800) |
 | Show hover data | Enable interactive tooltips |
 
