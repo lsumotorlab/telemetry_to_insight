@@ -258,7 +258,7 @@ track_mapping_compare()
 | Reference lap | Which of A or B is the reference (delta = comparison − reference) |
 | Reference lap is synthetic | Labels the reference lap as synthetic in the plot titles |
 | Flip horizontal / vertical | Mirror coordinates |
-| Comparison attribute | The telemetry channel to compare (speed, RPM, gear, gas, brake, steer, ABS, TC, lateral G, longitudinal G) |
+| Comparison attribute | The telemetry channel to compare (speed, RPM, gear, gas, brake, steer, ABS, TC, lateral G, longitudinal G). When **lateral G** is selected, `accGHorizontal` is compared as its **absolute value** — left/right sign is dropped so both laps reflect cornering force magnitude only. |
 | Gear encoding | *(visible when Gear is selected)* Remap raw gear values where 0=R, 1=N, 2–7 = gears 1–6 |
 | Interpolation points | Resolution of the common lap axis used for delta calculation (default 800) |
 | Show hover data | Enable interactive tooltips |

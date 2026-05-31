@@ -826,7 +826,10 @@ track_mapping_compare <- function() {
         input$attribute
       ))
       
-      comp_df <- resample_two_laps(ref_df, cmp_df, vars = vars_needed, n_points = input$n_interp)
+      abs_lat_g <- function(df) {
+        if ("accGHorizontal" %in% names(df)) mutate(df, accGHorizontal = abs(accGHorizontal)) else df
+      }
+      comp_df <- resample_two_laps(abs_lat_g(ref_df), abs_lat_g(cmp_df), vars = vars_needed, n_points = input$n_interp)
       syn <- compute_seg_times_synthetic(raw_ref)
       
       list(
