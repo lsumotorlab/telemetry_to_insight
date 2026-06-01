@@ -210,11 +210,13 @@ track_mapping_interactive <- function(
   
   plot_track_with_elevation <- function(lap_data, lap_id, base_family = "Times New Roman", base_size = 18) {
     if (!("carCoordinatesY" %in% names(lap_data))) stop("Missing column: carCoordinatesY")
+    elev_range <- range(lap_data$carCoordinatesY, na.rm = TRUE)
+    if (diff(elev_range) < 1e-6) elev_range <- elev_range + c(-0.5, 0.5)
     lap_data <- downsample_for_plot(lap_data)
     ggplot(lap_data, aes(x = carCoordinatesX, y = carCoordinatesZ)) +
       geom_path(color = "gray85", linewidth = 0.7) +
       geom_point(aes(color = carCoordinatesY), size = 1.1, alpha = 0.85) +
-      scale_color_viridis_c(option = "cividis") +
+      scale_color_viridis_c(option = "cividis", limits = elev_range) +
       coord_fixed() +
       labs(
         title = paste("Track with Elevation | Lap", lap_id),
