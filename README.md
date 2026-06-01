@@ -312,8 +312,8 @@ The main analysis app. The sidebar lets you adjust the pre/post buffer, select l
 
 | Control | Description |
 |---------|-------------|
-| Seconds before entry | Extra data shown before the corner entry point (0–10 s) |
-| Seconds after exit | Extra data shown after the corner exit point (0–10 s) |
+| Seconds before entry (plots only) | Extra data shown before the corner entry point in traces and plots (0–10 s). Does not affect Corner Summary or Consistency metrics. |
+| Seconds after exit (plots only) | Extra data shown after the corner exit point in traces and plots (0–10 s). Does not affect Corner Summary or Consistency metrics. |
 | Select laps | Toggle individual laps on/off; Select all / Deselect all buttons |
 | Reference lap | Lap used as the baseline for Speed Delta and Time Delta plots |
 | Show hover data | Enable interactive tooltips on all plots |

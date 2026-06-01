@@ -502,11 +502,9 @@ options(shiny.maxRequestSize = 500 * 1024^2)
         avg_speed_kmh   = {
                            in_s <- carPositionNormalized >= min(entry_pos, exit_pos) &
                                    carPositionNormalized <= max(entry_pos, exit_pos) &
-                                   is.finite(speedKmh) & is.finite(lapTime)
-                           t_s <- lapTime[in_s]; v_s <- speedKmh[in_s]
-                           ord <- order(t_s); t_s <- t_s[ord]; v_s <- v_s[ord]
-                           if (length(t_s) < 2) NA_real_
-                           else sum(diff(t_s) * (head(v_s, -1) + tail(v_s, -1)) / 2) / sum(diff(t_s))
+                                   is.finite(speedKmh)
+                           v_s <- speedKmh[in_s]
+                           if (length(v_s) == 0) NA_real_ else mean(v_s)
                          },
         exit_speed_kmh  = .ca_interp(carPositionNormalized, speedKmh, exit_pos),
         max_lat_g       = if (.ca_has_cols(df, "accGHorizontal"))
@@ -779,9 +777,9 @@ options(shiny.maxRequestSize = 500 * 1024^2)
       sidebarPanel(
         tags$b(sprintf("Corner: pos %.4f → %.4f", entry_pos, exit_pos)),
         tags$hr(),
-        sliderInput("pre_buf",  "Seconds before entry",
+        sliderInput("pre_buf",  "Seconds before entry (plots only)",
                     min = 0, max = 10, value = 1, step = 0.5),
-        sliderInput("post_buf", "Seconds after exit",
+        sliderInput("post_buf", "Seconds after exit (plots only)",
                     min = 0, max = 10, value = 1, step = 0.5),
         tags$hr(),
         tags$label("Select laps"),
