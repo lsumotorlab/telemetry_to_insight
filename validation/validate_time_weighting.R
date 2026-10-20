@@ -82,11 +82,11 @@ for (lap in sort(unique(val$lapCount))) {
   for (m in weighted_metrics) {
     check("A uniform", paste0("Lap ", lap, " | ", m), old[[m]], new[[m]])
   }
-  # single-lap map subtitle: time_pct(cond, lap_time_weights(lap_data))
+  # single-lap map subtitle: lap_pct(cond, lap_times(lap_data))
   check(
     "A uniform", paste0("Lap ", lap, " | Map: full throttle %"),
     old[["Full Throttle (%)"]],
-    time_pct(lap_data$gas > 0.99, lap_time_weights(lap_data))
+    lap_pct(lap_data$gas > 0.99, lap_times(lap_data))
   )
 }
 
@@ -152,9 +152,9 @@ pwalk(expected_b, \(lap, metric, expected) {
 
 lap1 <- uneven |> filter(lapCount == 1)
 check("B uneven", "Lap 1 | Map: full throttle %", 950 / 3500 * 100,
-      time_pct(lap1$gas > 0.99, lap_time_weights(lap1)))
+      lap_pct(lap1$gas > 0.99, lap_times(lap1)))
 check("B uneven", "Lap 1 | Map: overlap %", 550 / 3500 * 100,
-      time_pct(lap1$gas > 0.99 & lap1$brake > 0.01, lap_time_weights(lap1)))
+      lap_pct(overlap_flag(lap1$gas, lap1$brake, 0.99, 0.01), lap_times(lap1)))
 
 # Corner spanning all samples (0.1 to 0.8)
 corner_b <- corner_summary(uneven, 0.1, 0.8)

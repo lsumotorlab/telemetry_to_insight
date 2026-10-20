@@ -31,7 +31,7 @@ track_mapping_interactive <- function(
   })
   filter <- dplyr::filter
   
-  # lowpass_filter(), time_pct() and lap_time_weights() are in telemetry_core.R
+  # lowpass_filter(), lap_pct(), lap_times() and overlap_flag() are in telemetry_core.R
 
   downsample_for_plot <- function(df, max_points = 12000) {
     if (nrow(df) <= max_points) return(df)
@@ -126,7 +126,7 @@ track_mapping_interactive <- function(
     if (!all(need %in% names(lap_data))) stop("Missing columns: gas and speedKmh")
     # % computed on the full-resolution lap, before downsampling for plotting
     if ("lapTime" %in% names(lap_data)) lap_data <- lap_data %>% arrange(lapTime)
-    throttle_pct <- time_pct(lap_data$gas > throttle_threshold, lap_time_weights(lap_data))
+    throttle_pct <- lap_pct(lap_data$gas > throttle_threshold, lap_times(lap_data))
     lap_data <- downsample_for_plot(lap_data)
     throttle_zones <- lap_data %>% filter(gas > throttle_threshold)
     ggplot(lap_data, aes(x = carCoordinatesX, y = carCoordinatesZ)) +
@@ -151,8 +151,8 @@ track_mapping_interactive <- function(
     # % computed on the full-resolution lap, before downsampling for plotting
     if ("lapTime" %in% names(lap_data)) lap_data <- lap_data %>% arrange(lapTime)
     lap_data <- lap_data %>%
-      mutate(overlap_flag = gas > throttle_threshold & brake > brake_threshold)
-    overlap_pct <- time_pct(lap_data$overlap_flag, lap_time_weights(lap_data))
+      mutate(overlap_flag = overlap_flag(gas, brake, throttle_threshold, brake_threshold))
+    overlap_pct <- lap_pct(lap_data$overlap_flag, lap_times(lap_data))
     lap_data <- downsample_for_plot(lap_data)
     ggplot(lap_data, aes(x = carCoordinatesX, y = carCoordinatesZ)) +
       geom_path(color = "gray80", linewidth = 0.9) +

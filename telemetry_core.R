@@ -43,6 +43,7 @@ as_syn_laps <- function(x) {
 #   w_1 = t[2] - t[1],  w_n = t[n] - t[n-1]   at the endpoints
 # Time-weighted mean:        mean_w(x) = sum(x_i * w_i) / sum(w_i)
 # Time share of a condition: pct_w(c)  = 100 * sum(w_i[c_i]) / sum(w_i)
+#                            (over samples where the condition is not NA)
 # Under uniform sampling all w_i are equal, so these reduce exactly to the
 # arithmetic mean and the share of samples. They stay correct for irregular
 # sampling and for laps resampled in track position (composite reference lap).
@@ -59,15 +60,62 @@ time_weights <- function(t) {
   w
 }
 
-# Time weights for one lap's rows (equal weights if lapTime is absent)
-lap_time_weights <- function(lap_data) {
-  if ("lapTime" %in% names(lap_data)) time_weights(lap_data$lapTime) else rep(1, nrow(lap_data))
+# lapTime column of a lap's rows, or NULL if absent
+lap_times <- function(lap_data) {
+  if ("lapTime" %in% names(lap_data)) lap_data$lapTime else NULL
 }
 
-# Time share (%) where cond is TRUE; NA cond counts as FALSE
+# Missing data rule (one rule for all metrics): each metric uses only the
+# samples where its channel has a value, and the time weights are computed
+# from those samples. A missing value is therefore bridged by its valid
+# neighbours, each covering half of the gap - exactly like a dropped sample.
+# Rows without lapTime are left out; if a lap has no usable lapTime at all,
+# its samples are weighted equally. A channel missing for the whole lap gives NA.
+.weighting_times <- function(t, n) {
+  if (is.null(t) || !any(is.finite(t))) seq_len(n) else as.numeric(t)
+}
+
+# Time share (%) where cond is TRUE: pct_w(c) over the samples with a value
+lap_pct <- function(cond, t = NULL) {
+  tt <- .weighting_times(t, length(cond))
+  ok <- !is.na(cond) & is.finite(tt)
+  if (!any(ok)) return(NA_real_)
+  ord <- order(tt[ok])
+  time_pct(cond[ok][ord], time_weights(tt[ok][ord]))
+}
+
+# Time-weighted mean: mean_w(x) over the samples with a value
+lap_mean <- function(x, t = NULL) {
+  tt <- .weighting_times(t, length(x))
+  ok <- is.finite(x) & is.finite(tt)
+  if (!any(ok)) return(NA_real_)
+  ord <- order(tt[ok])
+  time_mean(x[ok][ord], time_weights(tt[ok][ord]))
+}
+
+
+# Time share (%) where cond is TRUE for given weights (samples where cond is
+# NA are left out); building block for lap_pct()
 time_pct <- function(cond, w) {
-  if (length(w) == 0 || sum(w) <= 0) return(NA_real_)
-  sum(w[cond %in% TRUE]) / sum(w) * 100
+  valid <- !is.na(cond)
+  if (length(w) == 0 || sum(w[valid]) <= 0) return(NA_real_)
+  sum(w[valid & cond]) / sum(w[valid]) * 100
+}
+
+# Brake/throttle overlap per sample: TRUE/FALSE, NA if either channel is missing
+overlap_flag <- function(gas, brake, full_throttle_threshold, braking_threshold) {
+  ifelse(is.na(gas) | is.na(brake), NA,
+         gas > full_throttle_threshold & brake > braking_threshold)
+}
+
+# Max/min of the finite values; NA (not -Inf/Inf) if there are none
+safe_max <- function(x) {
+  x <- x[is.finite(x)]
+  if (length(x) == 0) NA_real_ else max(x)
+}
+safe_min <- function(x) {
+  x <- x[is.finite(x)]
+  if (length(x) == 0) NA_real_ else min(x)
 }
 
 # Time-weighted mean, ignoring NA values
@@ -111,8 +159,9 @@ lowpass_filter <- function(x, cutoff_hz, fs) {
 # =============================================================================
 # Lap summary metrics
 # =============================================================================
-# Per lap (w = time weights, see above):
-#   Lap Time (s)               = max(lapTime) / 1000
+# Per lap (time-weighted, missing data bridged by valid neighbours, see above):
+#   Lap Time (s)               = interpolated time at which the car returns to the
+#                                lap's own timing line (lap_time_estimate) / 1000
 #   Full Throttle (%)          = pct_w(gas > full_throttle_threshold)
 #   Braking (%)                = pct_w(brake > braking_threshold)
 #   Brake/Throttle Overlap (%) = pct_w(gas > full_throttle_threshold & brake > braking_threshold)
@@ -130,28 +179,26 @@ calculate_lap_stats <- function(
 
   if (nrow(lap_data) == 0) return(NULL)
 
-  # Time-weighted metrics: rows sorted by lapTime so weights follow sample order
-  lap_data <- lap_data |>
-    dplyr::arrange(lapTime) |>
-    dplyr::mutate(.w = time_weights(lapTime))
+  has_pos <- "carPositionNormalized" %in% names(lap_data)
 
   lap_data |>
     dplyr::summarise(
       Lap = lap_num,
-      `Lap Time (s)` = max(lapTime, na.rm = TRUE) / 1000,
-      `Full Throttle (%)` = time_pct(gas > full_throttle_threshold, .w),
-      `Braking (%)` = time_pct(brake > braking_threshold, .w),
-      `Brake/Throttle Overlap (%)` = time_pct(
-        gas > full_throttle_threshold & brake > braking_threshold, .w
+      `Lap Time (s)` = (if (has_pos) lap_time_estimate(carPositionNormalized, lapTime)
+                        else safe_max(lapTime)) / 1000,
+      `Full Throttle (%)` = lap_pct(gas > full_throttle_threshold, lapTime),
+      `Braking (%)` = lap_pct(brake > braking_threshold, lapTime),
+      `Brake/Throttle Overlap (%)` = lap_pct(
+        overlap_flag(gas, brake, full_throttle_threshold, braking_threshold), lapTime
       ),
-      `Avg Speed (km/h)` = time_mean(speedKmh, .w),
-      `Max Speed (km/h)` = max(speedKmh, na.rm = TRUE),
-      `Min Speed (km/h)` = min(speedKmh, na.rm = TRUE),
-      `ABS Active (%)` = time_pct(isAbsInAction == 1, .w),
-      `TC Active (%)` = time_pct(isTcInAction == 1, .w),
-      `Max Lateral G` = if ("accGHorizontal" %in% names(lap_data)) max(abs(accGHorizontal), na.rm = TRUE) else NA_real_,
-      `Max Accel G` = if ("accGFrontal" %in% names(lap_data)) max(accGFrontal, na.rm = TRUE) else NA_real_,
-      `Max Brake G` = if ("accGFrontal" %in% names(lap_data)) min(accGFrontal, na.rm = TRUE) else NA_real_,
+      `Avg Speed (km/h)` = lap_mean(speedKmh, lapTime),
+      `Max Speed (km/h)` = safe_max(speedKmh),
+      `Min Speed (km/h)` = safe_min(speedKmh),
+      `ABS Active (%)` = lap_pct(isAbsInAction == 1, lapTime),
+      `TC Active (%)` = lap_pct(isTcInAction == 1, lapTime),
+      `Max Lateral G` = if ("accGHorizontal" %in% names(lap_data)) safe_max(abs(accGHorizontal)) else NA_real_,
+      `Max Accel G` = if ("accGFrontal" %in% names(lap_data)) safe_max(accGFrontal) else NA_real_,
+      `Max Brake G` = if ("accGFrontal" %in% names(lap_data)) safe_min(accGFrontal) else NA_real_,
       .groups = "drop"
     )
 }
@@ -259,6 +306,27 @@ seg_duration <- function(pos, t, start, end) {
   }
 }
 
+# Lap time (ms) from the interpolated crossing of the lap's own timing line.
+# The lap timer starts (lapTime = 0) when the car crosses the timing line; that
+# position u0 is estimated from the first samples, and the lap time is the
+# interpolated time at which the car reaches u0 + 1. The timing line does not
+# have to be at normalized position 0 (in Assetto Corsa it is at about 0.0009).
+# Falls back to the last sample's lapTime for laps that do not start at the
+# timing line or do not reach it again (out-laps, incomplete laps).
+lap_time_estimate <- function(pos, t, max_start_ms = 1000, max_extrap = 0.02) {
+  fallback <- safe_max(t)
+  un <- lap_unwrap(pos, t)
+  u <- un$u
+  tt <- as.numeric(t[un$idx])
+  n <- length(u)
+  if (n < 3 || tt[1] > max_start_ms) return(fallback)
+  # position at lapTime = 0, extrapolated back from the first two samples
+  u0 <- if (tt[1] <= 0 || tt[2] <= tt[1]) u[1] else u[1] - (u[2] - u[1]) / (tt[2] - tt[1]) * tt[1]
+  if (u[n] < u0 + 1 - max_extrap) return(fallback)
+  est <- interp_extrap(u, tt, u0 + 1, max_extrap = max_extrap)
+  if (is.finite(est)) est else fallback
+}
+
 # =============================================================================
 # Lap comparison (track_mapping_compare_interactive.R)
 # =============================================================================
@@ -311,20 +379,17 @@ resample_two_laps <- function(ref_df, cmp_df, vars, n_points = 800) {
   out
 }
 
-# Lap time (s) = max(lapTime) / 1000
+# Lap time (s), same definition as the lap summary (lap_time_estimate)
 compute_lap_time_seconds <- function(df) {
   if (!("lapTime" %in% names(df))) {
     return(NA_real_)
   }
 
-  vals <- df$lapTime
-  vals <- vals[is.finite(vals)]
-
-  if (length(vals) == 0) {
-    return(NA_real_)
+  if ("carPositionNormalized" %in% names(df)) {
+    lap_time_estimate(df$carPositionNormalized, df$lapTime) / 1000
+  } else {
+    safe_max(df$lapTime) / 1000
   }
-
-  max(vals, na.rm = TRUE) / 1000
 }
 
 # Sector boundaries and times (ms) of a composite reference lap
@@ -401,27 +466,24 @@ corner_summary_table <- function(df, entry_pos, exit_pos) {
       corner_time_s   = (interp_numeric(carPositionNormalized, lapTime, exit_pos) -
                            interp_numeric(carPositionNormalized, lapTime, entry_pos)) / 1000,
       entry_speed_kmh = interp_numeric(carPositionNormalized, speedKmh, entry_pos),
-      min_speed_kmh   = min(speedKmh[carPositionNormalized >= lo & carPositionNormalized <= hi],
-                            na.rm = TRUE),
+      min_speed_kmh   = safe_min(speedKmh[carPositionNormalized >= lo & carPositionNormalized <= hi]),
       avg_speed_kmh   = {
         in_s <- carPositionNormalized >= lo & carPositionNormalized <= hi
-        ord  <- order(lapTime[in_s])
-        time_mean(speedKmh[in_s][ord], time_weights(lapTime[in_s][ord]))
+        lap_mean(speedKmh[in_s], lapTime[in_s])
       },
       exit_speed_kmh  = interp_numeric(carPositionNormalized, speedKmh, exit_pos),
       max_lat_g       = if (has_cols(df, "accGHorizontal"))
-                          max(abs(accGHorizontal[carPositionNormalized >= lo & carPositionNormalized <= hi]),
-                              na.rm = TRUE)
+                          safe_max(abs(accGHorizontal[carPositionNormalized >= lo & carPositionNormalized <= hi]))
                         else NA_real_,
       max_brake_g     = if (has_cols(df, "accGFrontal")) {
                           vals <- accGFrontal[carPositionNormalized >= lo & carPositionNormalized <= hi &
                                                 accGFrontal < 0]
-                          if (length(vals) == 0) NA_real_ else max(abs(vals), na.rm = TRUE)
+                          safe_max(abs(vals))
                         } else NA_real_,
       max_accel_g     = if (has_cols(df, "accGFrontal")) {
                           vals <- accGFrontal[carPositionNormalized >= lo & carPositionNormalized <= hi &
                                                 accGFrontal > 0]
-                          if (length(vals) == 0) NA_real_ else max(vals, na.rm = TRUE)
+                          safe_max(vals)
                         } else NA_real_,
       .groups = "drop"
     ) |>
