@@ -149,82 +149,100 @@ track_mapping_compare <- function() {
     sprintf("%d:%05.2f", minutes, seconds)
   }
   
-  in_interval <- function(pos, start, end, include_left = TRUE) {
+  # ---- Position-time helpers (interpolated boundary crossings) ----
+
+  # Order one lap's samples by time and unwrap normalized position across the
+  # start/finish line, so position rises from ~0 to ~1 over the lap
+  lap_unwrap <- function(pos, t) {
+    idx <- which(is.finite(pos) & is.finite(t))
+    idx <- idx[order(t[idx])]
+    p <- pos[idx]
+    jump <- c(0, diff(p))
+    u <- p + cumsum(jump < -0.5) - cumsum(jump > 0.5)
+    if (length(u) > 0 && u[1] > 0.5) u <- u - 1  # lap starts just before the line
+    u <- cummax(u)
+    keep <- !duplicated(u)
+    list(idx = idx[keep], u = u[keep])
+  }
+
+  # Linear interpolation, with linear extrapolation of up to max_extrap
+  # (lap fraction) beyond the first/last sample; NA further out
+  interp_extrap <- function(x, y, xout, max_extrap = 0.02) {
+    n <- length(x)
+    if (n < 2) return(rep(NA_real_, length(xout)))
+    out <- approx(x, y, xout = xout, rule = 2)$y
+    lo <- xout < x[1]
+    hi <- xout > x[n]
+    out[lo] <- y[1] + (xout[lo] - x[1]) * (y[2] - y[1]) / (x[2] - x[1])
+    out[hi] <- y[n] + (xout[hi] - x[n]) * (y[n] - y[n - 1]) / (x[n] - x[n - 1])
+    out[(lo & x[1] - xout > max_extrap) | (hi & xout - x[n] > max_extrap)] <- NA_real_
+    out
+  }
+
+  # Time at which a lap passes unwrapped position(s) u (0/1 = start/finish line
+  # at the start/end of the lap), interpolated between the samples either side
+  lap_time_at <- function(pos, t, u) {
+    un <- lap_unwrap(pos, t)
+    interp_extrap(un$u, t[un$idx], u)
+  }
+
+  # Segment duration from interpolated boundary-crossing times;
+  # start > end means the segment crosses the start/finish line
+  seg_duration <- function(pos, t, start, end) {
     if (start < end) {
-      if (include_left) pos >= start & pos < end else pos > start & pos <= end
+      tt <- lap_time_at(pos, t, c(start, end))
+      tt[2] - tt[1]
     } else {
-      if (include_left) {
-        (pos >= start & pos < 1) | (pos >= 0 & pos < end)
-      } else {
-        (pos > start & pos <= 1) | (pos >= 0 & pos <= end)
-      }
+      tt <- lap_time_at(pos, t, c(start, 1, 0, end))
+      (tt[2] - tt[1]) + (tt[4] - tt[3])
     }
   }
-  
+
   compute_seg_times_synthetic <- function(raw_df) {
     if (!has_cols(raw_df, c("seg", "lapTime", "carPositionNormalized"))) {
       return(list(times = numeric(0), bounds = NULL))
     }
-    
+
     df <- raw_df |>
-      filter(!is.na(seg), is.finite(lapTime), is.finite(carPositionNormalized)) |>
-      arrange(lapTime)
-    
+      filter(!is.na(seg), is.finite(lapTime), is.finite(carPositionNormalized))
+
     if (nrow(df) == 0) {
       return(list(times = numeric(0), bounds = NULL))
     }
-    
-    bounds <- df |>
-      group_by(seg) |>
-      summarise(
-        duration_ms = max(lapTime, na.rm = TRUE) - min(lapTime, na.rm = TRUE),
-        start = dplyr::first(carPositionNormalized),
-        end   = dplyr::last(carPositionNormalized),
-        .groups = "drop"
-      ) |>
-      arrange(seg)
-    
-    times <- tibble::deframe(bounds |>
-                               select(seg, duration_ms))
-    
-    list(times = times, bounds = bounds)
-  }
-  
-  compute_seg_times_real <- function(raw_df, bounds) {
-    if (has_cols(raw_df, c("seg", "lapTime")) && any(!is.na(raw_df$seg))) {
-      out <- raw_df |>
-        filter(!is.na(seg), is.finite(lapTime)) |>
+
+    if (has_cols(df, c("start", "end")) && all(is.finite(df$start)) && all(is.finite(df$end))) {
+      # Exact sector boundaries stored with the composite lap
+      bounds <- df |>
+        distinct(seg, start, end) |>
+        arrange(seg)
+    } else {
+      # Older composite files without boundary columns: first/last sample of each sector
+      bounds <- df |>
+        arrange(lapTime) |>
         group_by(seg) |>
         summarise(
-          duration_ms = max(lapTime, na.rm = TRUE) - min(lapTime, na.rm = TRUE),
+          start = dplyr::first(carPositionNormalized),
+          end   = dplyr::last(carPositionNormalized),
           .groups = "drop"
         ) |>
         arrange(seg)
-      
-      return(setNames(out$duration_ms, out$seg))
     }
-    
+
+    list(times = compute_seg_times_real(raw_df, bounds), bounds = bounds)
+  }
+
+  compute_seg_times_real <- function(raw_df, bounds) {
     if (is.null(bounds) ||
         !has_cols(raw_df, c("lapTime", "carPositionNormalized")) ||
         !all(c("seg", "start", "end") %in% names(bounds))) {
       return(numeric(0))
     }
-    
-    df <- raw_df |>
-      filter(is.finite(lapTime), is.finite(carPositionNormalized)) |>
-      arrange(lapTime) |>
-      mutate(
-        dt = pmax(0, lapTime - lag(lapTime, default = first(lapTime)))
-      )
-    
+
     times <- vapply(seq_len(nrow(bounds)), function(i) {
-      rows <- df |>
-        filter(in_interval(carPositionNormalized, bounds$start[i], bounds$end[i], include_left = TRUE))
-      
-      if (nrow(rows) < 2) return(NA_real_)
-      sum(rows$dt, na.rm = TRUE)
+      seg_duration(raw_df$carPositionNormalized, raw_df$lapTime,
+                   bounds$start[i], bounds$end[i])
     }, numeric(1))
-    
+
     setNames(times, bounds$seg)
   }
   
@@ -498,10 +516,10 @@ track_mapping_compare <- function() {
                                       base_family = "Times New Roman", base_size = 18) {
     need_ref <- c("seg", "carPositionNormalized", "carCoordinatesX", "carCoordinatesZ")
     if (!has_cols(ref_df, need_ref)) {
-      return(make_error_plot("Reference (synthetic) lap missing required columns"))
+      return(make_error_plot("Composite reference lap missing required columns"))
     }
     if (length(seg_times_ref) == 0) {
-      return(make_error_plot("No segment times found in reference (synthetic) lap"))
+      return(make_error_plot("No segment times found in composite reference lap"))
     }
     
     segs <- names(seg_times_ref)
@@ -537,14 +555,19 @@ track_mapping_compare <- function() {
              is.finite(lapTime),
              is.finite(carCoordinatesX),
              is.finite(carCoordinatesZ)) |>
-      mutate(seg = as.character(seg)) |>
+      mutate(
+        seg = as.character(seg),
+        # order each segment from its start boundary (keeps a segment that
+        # crosses the start/finish line in one piece)
+        .ord = if ("start" %in% names(ref_df)) (carPositionNormalized - start) %% 1 else lapTime
+      ) |>
       semi_join(
         seg_df |>
           mutate(seg = as.character(seg)) |>
           select(seg),
         by = "seg"
       ) |>
-      arrange(seg, lapTime) |>
+      arrange(seg, .ord) |>
       group_by(seg) |>
       summarise(
         start_x = dplyr::first(carCoordinatesX),
@@ -670,7 +693,7 @@ track_mapping_compare <- function() {
           choices = c("Lap A", "Lap B"),
           selected = "Lap A"
         ),
-        checkboxInput("reference_is_synthetic", "Reference lap is synthetic", value = FALSE),
+        checkboxInput("reference_is_synthetic", "Reference lap is the composite reference lap", value = FALSE),
         tags$hr(),
         checkboxInput("flip_horizontal", "Flip horizontal (mirror X)", value = TRUE),
         checkboxInput("flip_vertical", "Flip vertical (mirror Z)", value = FALSE),
@@ -811,7 +834,7 @@ track_mapping_compare <- function() {
       }
       
       ref_label <- if (isTRUE(input$reference_is_synthetic)) {
-        paste0(ref_base, " | reference | synthetic")
+        paste0(ref_base, " | composite reference")
       } else {
         paste0(ref_base, " | reference")
       }
@@ -925,7 +948,7 @@ track_mapping_compare <- function() {
           if (isTRUE(input$reference_is_synthetic)) "| Segment time delta" else "", "\n")
       cat("Plot downsampling cap:", 12000, "points\n")
       if (isTRUE(input$reference_is_synthetic)) {
-        cat("Synthetic segments available:", length(dat$seg_times_ref), "\n")
+        cat("Composite reference segments available:", length(dat$seg_times_ref), "\n")
         cat("Comparison segment matches:", sum(is.finite(dat$seg_times_cmp)), "\n")
       }
     })

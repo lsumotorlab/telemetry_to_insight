@@ -25,6 +25,25 @@ track_mapping_interactive <- function(
     as.numeric(signal::filtfilt(bf, x))
   }
 
+  # Time share (%) of the lap where cond is TRUE. Per-sample weights:
+  # (t[i+1] - t[i-1]) / 2 for interior samples, single adjacent interval at
+  # the endpoints; equal weights if lapTime is missing or unusable.
+  time_pct <- function(cond, t = NULL) {
+    n <- length(cond)
+    if (n == 0) return(NA_real_)
+    w <- rep(1, n)
+    if (!is.null(t) && n >= 2) {
+      dt <- diff(as.numeric(t))
+      dt[!is.finite(dt) | dt < 0] <- NA
+      if (!all(is.na(dt))) {
+        w <- rowMeans(cbind(c(NA, dt), c(dt, NA)), na.rm = TRUE)
+        w[!is.finite(w)] <- 0
+      }
+    }
+    if (sum(w) <= 0) return(NA_real_)
+    sum(w[cond %in% TRUE]) / sum(w) * 100
+  }
+
   downsample_for_plot <- function(df, max_points = 12000) {
     if (nrow(df) <= max_points) return(df)
     step <- ceiling(nrow(df) / max_points)
@@ -116,9 +135,11 @@ track_mapping_interactive <- function(
   plot_throttle_zones <- function(lap_data, lap_id, throttle_threshold = 0.99, base_family = "Times New Roman", base_size = 18) {
     need <- c("gas", "speedKmh")
     if (!all(need %in% names(lap_data))) stop("Missing columns: gas and speedKmh")
+    # % computed on the full-resolution lap, before downsampling for plotting
+    if ("lapTime" %in% names(lap_data)) lap_data <- lap_data %>% arrange(lapTime)
+    throttle_pct <- time_pct(lap_data$gas > throttle_threshold, lap_data$lapTime)
     lap_data <- downsample_for_plot(lap_data)
     throttle_zones <- lap_data %>% filter(gas > throttle_threshold)
-    throttle_pct <- if (nrow(lap_data) > 0) (nrow(throttle_zones) / nrow(lap_data)) * 100 else NA_real_
     ggplot(lap_data, aes(x = carCoordinatesX, y = carCoordinatesZ)) +
       geom_path(color = "gray80", linewidth = 0.9) +
       geom_point(data = throttle_zones, aes(color = speedKmh), size = 1.2, alpha = 0.75) +
@@ -126,7 +147,7 @@ track_mapping_interactive <- function(
       coord_fixed() +
       labs(
         title = paste("Full Throttle Zones | Lap", lap_id),
-        subtitle = paste0("Samples above ", throttle_threshold * 100, "% throttle: ", sprintf("%.1f", throttle_pct), "%"),
+        subtitle = paste0("Time above ", throttle_threshold * 100, "% throttle: ", sprintf("%.1f", throttle_pct), "% of lap time"),
         x = "X Position (m)",
         y = "Z Position (m)",
         color = "Speed\n(km/h)"
@@ -138,11 +159,12 @@ track_mapping_interactive <- function(
   plot_overlap_zones <- function(lap_data, lap_id, throttle_threshold = 0.99, brake_threshold = 0.01, base_family = "Times New Roman", base_size = 18) {
     need <- c("gas", "brake")
     if (!all(need %in% names(lap_data))) stop("Missing columns: gas and brake")
-    lap_data <- downsample_for_plot(lap_data)
+    # % computed on the full-resolution lap, before downsampling for plotting
+    if ("lapTime" %in% names(lap_data)) lap_data <- lap_data %>% arrange(lapTime)
     lap_data <- lap_data %>%
       mutate(overlap_flag = gas > throttle_threshold & brake > brake_threshold)
-    overlap_pts <- lap_data %>% filter(overlap_flag)
-    overlap_pct <- if (nrow(lap_data) > 0) (nrow(overlap_pts) / nrow(lap_data)) * 100 else NA_real_
+    overlap_pct <- time_pct(lap_data$overlap_flag, lap_data$lapTime)
+    lap_data <- downsample_for_plot(lap_data)
     ggplot(lap_data, aes(x = carCoordinatesX, y = carCoordinatesZ)) +
       geom_path(color = "gray80", linewidth = 0.9) +
       geom_point(aes(color = overlap_flag), size = 1.3, alpha = 0.75) +
@@ -150,7 +172,7 @@ track_mapping_interactive <- function(
       coord_fixed() +
       labs(
         title = paste("Brake/Throt Overlap | Lap", lap_id),
-        subtitle = paste0("Brake > ", brake_threshold, " and throttle > ", throttle_threshold, ": ", sprintf("%.1f", overlap_pct), "% of samples"),
+        subtitle = paste0("Brake > ", brake_threshold, " and throttle > ", throttle_threshold, ": ", sprintf("%.1f", overlap_pct), "% of lap time"),
         x = "X Position (m)",
         y = "Z Position (m)",
         color = NULL

@@ -16,6 +16,19 @@ options(shiny.maxRequestSize = 500 * 1024^2)
   approx(x, y, xout, rule = 2)$y
 }
 
+# Per-sample time weights: (t[i+1] - t[i-1]) / 2 for interior samples,
+# single adjacent interval at the endpoints; equal weights if no usable timing
+.ca_time_weights <- function(t) {
+  n <- length(t)
+  if (n < 2) return(rep(1, n))
+  dt <- diff(as.numeric(t))
+  dt[!is.finite(dt) | dt < 0] <- NA
+  if (all(is.na(dt))) return(rep(1, n))
+  w <- rowMeans(cbind(c(NA, dt), c(dt, NA)), na.rm = TRUE)
+  w[!is.finite(w)] <- 0
+  w
+}
+
 .ca_lowpass <- function(x, cutoff_hz, fs) {
   if (is.na(fs) || fs <= 0 || cutoff_hz <= 0 || cutoff_hz >= fs / 2) return(x)
   W  <- cutoff_hz / (fs / 2)
@@ -305,10 +318,19 @@ options(shiny.maxRequestSize = 500 * 1024^2)
 
   laps_all <- sort(unique(telemetry$lapCount))
   laps_all <- laps_all[laps_all > 0]
-  if (".synthetic" %in% names(telemetry)) {
-    synth_laps <- unique(telemetry$lapCount[telemetry$.synthetic == TRUE])
-    laps_all   <- setdiff(laps_all, synth_laps)
+
+  # Composite reference lap (from create_synthetic_lap.R): available for
+  # analysis and as the reference lap, labelled, and left out of the
+  # across-lap consistency statistics
+  comp_laps <- if (".synthetic" %in% names(telemetry)) {
+    unique(telemetry$lapCount[telemetry$.synthetic %in% TRUE])
+  } else {
+    integer(0)
   }
+  lap_lbl <- function(l) {
+    ifelse(l %in% comp_laps, paste0("Lap ", l, " (composite ref.)"), paste0("Lap ", l))
+  }
+  comp_labels <- lap_lbl(comp_laps)
 
   g_axis_lim <- if (.ca_has_cols(telemetry, c("accGHorizontal", "accGFrontal"))) {
     raw_max <- max(abs(c(telemetry$accGHorizontal, telemetry$accGFrontal)), na.rm = TRUE)
@@ -351,7 +373,7 @@ options(shiny.maxRequestSize = 500 * 1024^2)
                  lapTime <= exit_t  + post_sec * 1000)
       }
 
-      filtered |> mutate(lap_label = paste0("Lap ", lid))
+      filtered |> mutate(lap_label = lap_lbl(lid))
     })
   }
 
@@ -500,11 +522,15 @@ options(shiny.maxRequestSize = 500 * 1024^2)
                                         carPositionNormalized <= max(entry_pos, exit_pos)],
                               na.rm = TRUE),
         avg_speed_kmh   = {
+                           # time-weighted mean of in-corner samples
                            in_s <- carPositionNormalized >= min(entry_pos, exit_pos) &
-                                   carPositionNormalized <= max(entry_pos, exit_pos) &
-                                   is.finite(speedKmh)
-                           v_s <- speedKmh[in_s]
-                           if (length(v_s) == 0) NA_real_ else mean(v_s)
+                                   carPositionNormalized <= max(entry_pos, exit_pos)
+                           ord <- order(lapTime[in_s])
+                           v_s <- speedKmh[in_s][ord]
+                           w_s <- .ca_time_weights(lapTime[in_s][ord])
+                           ok  <- is.finite(v_s)
+                           if (!any(ok) || sum(w_s[ok]) <= 0) NA_real_
+                           else sum(v_s[ok] * w_s[ok]) / sum(w_s[ok])
                          },
         exit_speed_kmh  = .ca_interp(carPositionNormalized, speedKmh, exit_pos),
         max_lat_g       = if (.ca_has_cols(df, "accGHorizontal"))
@@ -539,10 +565,10 @@ options(shiny.maxRequestSize = 500 * 1024^2)
       return(make_error_plot("speedKmh not found in data"))
     }
 
-    ref_label <- paste0("Lap ", ref_lap)
+    ref_label <- lap_lbl(ref_lap)
     ref_df    <- df |> filter(lap_label == ref_label)
     if (nrow(ref_df) == 0) {
-      return(make_error_plot(paste("Lap", ref_lap, "is not in the selected laps")))
+      return(make_error_plot(paste(ref_label, "is not in the selected laps")))
     }
 
     grid <- seq(
@@ -574,7 +600,7 @@ options(shiny.maxRequestSize = 500 * 1024^2)
       geom_vline(xintercept = exit_pos,  linetype = "dashed", color = "red3",   linewidth = 0.7) +
       scale_x_continuous(labels = percent_format(accuracy = 0.1)) +
       labs(
-        title    = paste("Speed Delta vs Lap", ref_lap),
+        title    = paste("Speed Delta vs", ref_label),
         subtitle = "Positive = faster than reference",
         x        = "Normalized lap position",
         y        = "Speed delta (km/h)",
@@ -594,10 +620,10 @@ options(shiny.maxRequestSize = 500 * 1024^2)
       return(make_error_plot("lapTime not found in data"))
     }
 
-    ref_label <- paste0("Lap ", ref_lap)
+    ref_label <- lap_lbl(ref_lap)
     ref_df    <- df |> filter(lap_label == ref_label)
     if (nrow(ref_df) == 0) {
-      return(make_error_plot(paste("Lap", ref_lap, "is not in the selected laps")))
+      return(make_error_plot(paste(ref_label, "is not in the selected laps")))
     }
 
     grid <- seq(
@@ -630,7 +656,7 @@ options(shiny.maxRequestSize = 500 * 1024^2)
       geom_vline(xintercept = exit_pos,  linetype = "dashed", color = "red3",   linewidth = 0.7) +
       scale_x_continuous(labels = percent_format(accuracy = 0.1)) +
       labs(
-        title    = paste("Cumulative Time Delta vs Lap", ref_lap),
+        title    = paste("Cumulative Time Delta vs", ref_label),
         subtitle = "Positive = faster than reference",
         x        = "Normalized lap position",
         y        = "Time delta (s)",
@@ -644,9 +670,11 @@ options(shiny.maxRequestSize = 500 * 1024^2)
 
   consistency_long <- function(df) {
     tbl <- make_summary_table(df)
+    # driven laps only: the composite reference lap is not part of lap-to-lap variability
+    if (!is.null(tbl)) tbl <- tbl |> filter(!(lap_label %in% comp_labels))
     if (is.null(tbl) || nrow(tbl) < 2) return(NULL)
     tbl |>
-      mutate(lap_num = as.integer(gsub("Lap ", "", lap_label))) |>
+      mutate(lap_num = as.integer(sub("^Lap (\\d+).*$", "\\1", lap_label))) |>
       arrange(lap_num) |>
       select(lap_label, lap_num, corner_time_s, entry_speed_kmh, min_speed_kmh, exit_speed_kmh,
              any_of(c("max_lat_g", "max_brake_g", "max_accel_g"))) |>
@@ -789,8 +817,11 @@ options(shiny.maxRequestSize = 500 * 1024^2)
         ),
         tags$br(),
         checkboxGroupInput("selected_laps", label = NULL,
-                           choices  = laps_all,
-                           selected = laps_all),
+                           choiceNames  = ifelse(laps_all %in% comp_laps,
+                                                 paste0(laps_all, " (composite reference)"),
+                                                 as.character(laps_all)),
+                           choiceValues = as.character(laps_all),
+                           selected     = as.character(laps_all)),
         tags$hr(),
         uiOutput("ref_ui"),
         tags$hr(),
@@ -848,7 +879,7 @@ options(shiny.maxRequestSize = 500 * 1024^2)
   server <- function(input, output, session) {
 
     observeEvent(input$select_all, {
-      updateCheckboxGroupInput(session, "selected_laps", selected = laps_all)
+      updateCheckboxGroupInput(session, "selected_laps", selected = as.character(laps_all))
     })
 
     observeEvent(input$deselect_all, {
@@ -858,7 +889,7 @@ options(shiny.maxRequestSize = 500 * 1024^2)
     output$ref_ui <- renderUI({
       req(input$selected_laps)
       laps <- as.integer(input$selected_laps)
-      choices <- c("None" = "0", setNames(as.character(laps), paste0("Lap ", laps)))
+      choices <- c("None" = "0", setNames(as.character(laps), lap_lbl(laps)))
       current  <- isolate(input$ref_lap)
       selected <- if (!is.null(current) && current %in% as.character(laps)) current else "0"
       selectInput("ref_lap", "Reference lap", choices = choices, selected = selected)
@@ -920,7 +951,7 @@ options(shiny.maxRequestSize = 500 * 1024^2)
       tbl_df <- make_summary_table(df)
       req(tbl_df)
 
-      ref_label <- if (!is.null(ref_lap_rv())) paste0("Lap ", ref_lap_rv()) else NULL
+      ref_label <- if (!is.null(ref_lap_rv())) lap_lbl(ref_lap_rv()) else NULL
 
       gt_tbl <- tbl_df |>
         gt() |>
