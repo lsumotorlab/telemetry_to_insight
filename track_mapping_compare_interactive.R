@@ -1,5 +1,18 @@
 options(shiny.maxRequestSize = 500 * 1024^2)
 
+# Shared calculation functions (telemetry_core.R, same folder as this script)
+local({
+  script_dir <- tryCatch(dirname(sys.frame(1)$ofile), error = function(e) NULL)
+  candidates <- c(file.path(script_dir, "telemetry_core.R"), "telemetry_core.R")
+  core <- candidates[file.exists(candidates)][1]
+  if (is.na(core)) {
+    stop("telemetry_core.R not found. Keep all toolkit files in one folder and open ",
+         "telemetry_to_insight.Rproj (or setwd() to that folder) before running this script.",
+         call. = FALSE)
+  }
+  source(core)
+})
+
 track_mapping_compare <- function() {
   
   suppressPackageStartupMessages({
@@ -19,8 +32,11 @@ track_mapping_compare <- function() {
 
   # --------------------------------------------------
   # Helpers
+  # Calculations (has_cols, prepare_lap_for_compare, resample_two_laps,
+  # compute_lap_time_seconds, compute_seg_times_synthetic/real) are in
+  # telemetry_core.R
   # --------------------------------------------------
-  
+
   downsample_for_plot <- function(df, max_points = 12000) {
     if (nrow(df) <= max_points) return(df)
     step <- ceiling(nrow(df) / max_points)
@@ -46,10 +62,6 @@ track_mapping_compare <- function() {
     plotly::toWebGL(gg)
   }
   
-  has_cols <- function(df, cols) {
-    all(cols %in% names(df))
-  }
-  
   make_error_plot <- function(msg) {
     ggplot() +
       annotate("text", x = 0, y = 0, label = msg, size = 6) +
@@ -61,85 +73,6 @@ track_mapping_compare <- function() {
     if (x %in% names(labels)) labels[[x]] else x
   }
   
-  interp_numeric <- function(x, y, xout) {
-    ok <- is.finite(x) & is.finite(y)
-    x <- x[ok]
-    y <- y[ok]
-    if (length(x) < 2) return(rep(NA_real_, length(xout)))
-    
-    ord <- order(x)
-    x <- x[ord]
-    y <- y[ord]
-    
-    dup <- duplicated(x)
-    x <- x[!dup]
-    y <- y[!dup]
-    
-    if (length(x) < 2) return(rep(NA_real_, length(xout)))
-    
-    approx(x = x, y = y, xout = xout, rule = 2)$y
-  }
-  
-  prepare_lap_for_compare <- function(df) {
-    need <- c("lapCount", "carCoordinatesX", "carCoordinatesZ", "carPositionNormalized")
-    miss <- setdiff(need, names(df))
-    if (length(miss) > 0) {
-      stop(paste("Missing required columns:", paste(miss, collapse = ", ")))
-    }
-    
-    df |>
-      arrange(carPositionNormalized) |>
-      filter(is.finite(carPositionNormalized)) |>
-      distinct(carPositionNormalized, .keep_all = TRUE)
-  }
-  
-  resample_two_laps <- function(ref_df, cmp_df, vars, n_points = 800) {
-    grid <- tibble(carPositionNormalized = seq(0, 1, length.out = n_points))
-    
-    out <- grid
-    
-    for (v in vars) {
-      if (v %in% names(ref_df)) {
-        out[[paste0(v, "_ref")]] <- interp_numeric(
-          ref_df$carPositionNormalized,
-          ref_df[[v]],
-          grid$carPositionNormalized
-        )
-      } else {
-        out[[paste0(v, "_ref")]] <- NA_real_
-      }
-      
-      if (v %in% names(cmp_df)) {
-        out[[paste0(v, "_cmp")]] <- interp_numeric(
-          cmp_df$carPositionNormalized,
-          cmp_df[[v]],
-          grid$carPositionNormalized
-        )
-      } else {
-        out[[paste0(v, "_cmp")]] <- NA_real_
-      }
-      
-      out[[paste0(v, "_delta")]] <- out[[paste0(v, "_cmp")]] - out[[paste0(v, "_ref")]]
-    }
-    
-    out
-  }
-  
-  compute_lap_time_seconds <- function(df) {
-    if (!("lapTime" %in% names(df))) {
-      return(NA_real_)
-    }
-    
-    vals <- df$lapTime
-    vals <- vals[is.finite(vals)]
-    
-    if (length(vals) == 0) {
-      return(NA_real_)
-    }
-    
-    max(vals, na.rm = TRUE) / 1000
-  }
-  
   format_seconds <- function(sec) {
     if (is.na(sec)) return("NA")
     
@@ -147,103 +80,6 @@ track_mapping_compare <- function() {
     seconds <- sec %% 60
     
     sprintf("%d:%05.2f", minutes, seconds)
-  }
-  
-  # ---- Position-time helpers (interpolated boundary crossings) ----
-
-  # Order one lap's samples by time and unwrap normalized position across the
-  # start/finish line, so position rises from ~0 to ~1 over the lap
-  lap_unwrap <- function(pos, t) {
-    idx <- which(is.finite(pos) & is.finite(t))
-    idx <- idx[order(t[idx])]
-    p <- pos[idx]
-    jump <- c(0, diff(p))
-    u <- p + cumsum(jump < -0.5) - cumsum(jump > 0.5)
-    if (length(u) > 0 && u[1] > 0.5) u <- u - 1  # lap starts just before the line
-    u <- cummax(u)
-    keep <- !duplicated(u)
-    list(idx = idx[keep], u = u[keep])
-  }
-
-  # Linear interpolation, with linear extrapolation of up to max_extrap
-  # (lap fraction) beyond the first/last sample; NA further out
-  interp_extrap <- function(x, y, xout, max_extrap = 0.02) {
-    n <- length(x)
-    if (n < 2) return(rep(NA_real_, length(xout)))
-    out <- approx(x, y, xout = xout, rule = 2)$y
-    lo <- xout < x[1]
-    hi <- xout > x[n]
-    out[lo] <- y[1] + (xout[lo] - x[1]) * (y[2] - y[1]) / (x[2] - x[1])
-    out[hi] <- y[n] + (xout[hi] - x[n]) * (y[n] - y[n - 1]) / (x[n] - x[n - 1])
-    out[(lo & x[1] - xout > max_extrap) | (hi & xout - x[n] > max_extrap)] <- NA_real_
-    out
-  }
-
-  # Time at which a lap passes unwrapped position(s) u (0/1 = start/finish line
-  # at the start/end of the lap), interpolated between the samples either side
-  lap_time_at <- function(pos, t, u) {
-    un <- lap_unwrap(pos, t)
-    interp_extrap(un$u, t[un$idx], u)
-  }
-
-  # Segment duration from interpolated boundary-crossing times;
-  # start > end means the segment crosses the start/finish line
-  seg_duration <- function(pos, t, start, end) {
-    if (start < end) {
-      tt <- lap_time_at(pos, t, c(start, end))
-      tt[2] - tt[1]
-    } else {
-      tt <- lap_time_at(pos, t, c(start, 1, 0, end))
-      (tt[2] - tt[1]) + (tt[4] - tt[3])
-    }
-  }
-
-  compute_seg_times_synthetic <- function(raw_df) {
-    if (!has_cols(raw_df, c("seg", "lapTime", "carPositionNormalized"))) {
-      return(list(times = numeric(0), bounds = NULL))
-    }
-
-    df <- raw_df |>
-      filter(!is.na(seg), is.finite(lapTime), is.finite(carPositionNormalized))
-
-    if (nrow(df) == 0) {
-      return(list(times = numeric(0), bounds = NULL))
-    }
-
-    if (has_cols(df, c("start", "end")) && all(is.finite(df$start)) && all(is.finite(df$end))) {
-      # Exact sector boundaries stored with the composite lap
-      bounds <- df |>
-        distinct(seg, start, end) |>
-        arrange(seg)
-    } else {
-      # Older composite files without boundary columns: first/last sample of each sector
-      bounds <- df |>
-        arrange(lapTime) |>
-        group_by(seg) |>
-        summarise(
-          start = dplyr::first(carPositionNormalized),
-          end   = dplyr::last(carPositionNormalized),
-          .groups = "drop"
-        ) |>
-        arrange(seg)
-    }
-
-    list(times = compute_seg_times_real(raw_df, bounds), bounds = bounds)
-  }
-
-  compute_seg_times_real <- function(raw_df, bounds) {
-    if (is.null(bounds) ||
-        !has_cols(raw_df, c("lapTime", "carPositionNormalized")) ||
-        !all(c("seg", "start", "end") %in% names(bounds))) {
-      return(numeric(0))
-    }
-
-    times <- vapply(seq_len(nrow(bounds)), function(i) {
-      seg_duration(raw_df$carPositionNormalized, raw_df$lapTime,
-                   bounds$start[i], bounds$end[i])
-    }, numeric(1))
-
-    setNames(times, bounds$seg)
   }
   
   # --------------------------------------------------
@@ -414,7 +250,7 @@ track_mapping_compare <- function() {
   
   plot_attribute_trace <- function(comp_df, attribute, ref_label, cmp_label,
                                    base_family = "Times New Roman", base_size = 18) {
-    ref_label <- sub(" \\| reference.*", "", ref_label)
+    ref_label <- sub(" \\| (composite )?reference.*", "", ref_label)
     cmp_label <- sub(" \\| comparison", "", cmp_label)
     ref_col <- paste0(attribute, "_ref")
     cmp_col <- paste0(attribute, "_cmp")

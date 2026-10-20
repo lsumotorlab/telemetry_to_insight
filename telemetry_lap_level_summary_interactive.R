@@ -8,50 +8,18 @@ suppressPackageStartupMessages({
   library(gt)
 })
 
-# =============================================================================
-# Helper: normalize composite reference lap input into a character vector
-# =============================================================================
-as_syn_laps <- function(x) {
-  if (is.null(x)) return(character(0))
-  if (length(x) == 0) return(character(0))
-  x <- x[!is.na(x)]
-  if (length(x) == 0) return(character(0))
-  x <- as.character(x)
-  x <- x[x != ""]
-  unique(x)
-}
-
-# =============================================================================
-# Helper: per-sample time weights
-# w_i = (t[i+1] - t[i-1]) / 2 for interior samples; endpoints get their single
-# adjacent interval. Equal to 1/n weighting under uniform sampling, but stays
-# correct for irregular sampling and for laps resampled in track position
-# (e.g. the composite reference lap). Falls back to equal weights if no
-# usable timing is available.
-# =============================================================================
-time_weights <- function(t) {
-  n <- length(t)
-  if (n < 2) return(rep(1, n))
-  dt <- diff(as.numeric(t))
-  dt[!is.finite(dt) | dt < 0] <- NA
-  if (all(is.na(dt))) return(rep(1, n))
-  w <- rowMeans(cbind(c(NA, dt), c(dt, NA)), na.rm = TRUE)
-  w[!is.finite(w)] <- 0
-  w
-}
-
-# Time share (%) of samples where cond is TRUE; NA cond counts as FALSE
-time_pct <- function(cond, w) {
-  if (sum(w) <= 0) return(NA_real_)
-  sum(w[cond %in% TRUE]) / sum(w) * 100
-}
-
-# Time-weighted mean, ignoring NA values
-time_mean <- function(x, w) {
-  ok <- is.finite(x)
-  if (!any(ok) || sum(w[ok]) <= 0) return(NA_real_)
-  sum(x[ok] * w[ok]) / sum(w[ok])
-}
+# Shared calculation functions (telemetry_core.R, same folder as this script)
+local({
+  script_dir <- tryCatch(dirname(sys.frame(1)$ofile), error = function(e) NULL)
+  candidates <- c(file.path(script_dir, "telemetry_core.R"), "telemetry_core.R")
+  core <- candidates[file.exists(candidates)][1]
+  if (is.na(core)) {
+    stop("telemetry_core.R not found. Keep all toolkit files in one folder and open ",
+         "telemetry_to_insight.Rproj (or setwd() to that folder) before running this script.",
+         call. = FALSE)
+  }
+  source(core)
+})
 
 # =============================================================================
 # DATA LOADING FUNCTION
@@ -68,94 +36,8 @@ load_telemetry <- function(file_path, flip_horizontal = TRUE, flip_vertical = FA
   telemetry
 }
 
-# =============================================================================
-# LAP STATISTICS
-# =============================================================================
-calculate_lap_stats <- function(
-    telemetry,
-    lap_num,
-    full_throttle_threshold = 0.99,
-    braking_threshold = 0.01
-) {
-  lap_data <- telemetry |>
-    dplyr::filter(lapCount == lap_num)
-  
-  if (nrow(lap_data) == 0) return(NULL)
-
-  # Time-weighted metrics: rows sorted by lapTime so weights follow sample order
-  lap_data <- lap_data |>
-    dplyr::arrange(lapTime) |>
-    dplyr::mutate(.w = time_weights(lapTime))
-
-  lap_data |>
-    dplyr::summarise(
-      Lap = lap_num,
-      `Lap Time (s)` = max(lapTime, na.rm = TRUE) / 1000,
-      `Full Throttle (%)` = time_pct(gas > full_throttle_threshold, .w),
-      `Braking (%)` = time_pct(brake > braking_threshold, .w),
-      `Brake/Throttle Overlap (%)` = time_pct(
-        gas > full_throttle_threshold & brake > braking_threshold, .w
-      ),
-      `Avg Speed (km/h)` = time_mean(speedKmh, .w),
-      `Max Speed (km/h)` = max(speedKmh, na.rm = TRUE),
-      `Min Speed (km/h)` = min(speedKmh, na.rm = TRUE),
-      `ABS Active (%)` = time_pct(isAbsInAction == 1, .w),
-      `TC Active (%)` = time_pct(isTcInAction == 1, .w),
-      `Max Lateral G` = if ("accGHorizontal" %in% names(lap_data)) max(abs(accGHorizontal), na.rm = TRUE) else NA_real_,
-      `Max Accel G` = if ("accGFrontal" %in% names(lap_data)) max(accGFrontal, na.rm = TRUE) else NA_real_,
-      `Max Brake G` = if ("accGFrontal" %in% names(lap_data)) min(accGFrontal, na.rm = TRUE) else NA_real_,
-      .groups = "drop"
-    )
-}
-
-calculate_multiple_laps <- function(
-    telemetry,
-    lap_numbers,
-    full_throttle_threshold = 0.99,
-    braking_threshold = 0.01
-) {
-  lap_numbers <- as.integer(lap_numbers)
-  purrr::map_dfr(
-    lap_numbers,
-    \(x) calculate_lap_stats(
-      telemetry,
-      x,
-      full_throttle_threshold = full_throttle_threshold,
-      braking_threshold = braking_threshold
-    )
-  )
-}
-
-# =============================================================================
-# SUMMARY STATISTICS
-# =============================================================================
-get_summary_stats <- function(lap_stats_table, synthetic_lap = NA) {
-  syn <- as_syn_laps(synthetic_lap)
-  
-  df <- lap_stats_table
-  if ("Lap" %in% names(df) && length(syn) > 0) {
-    df <- df |> dplyr::filter(!(as.character(.data$Lap) %in% syn))
-  }
-  
-  df |>
-    dplyr::select(-dplyr::any_of("Lap")) |>
-    dplyr::summarise(
-      dplyr::across(
-        dplyr::where(is.numeric),
-        list(
-          Mean = \(x) mean(x, na.rm = TRUE),
-          SD = \(x) sd(x, na.rm = TRUE),
-          Min = \(x) min(x, na.rm = TRUE),
-          Max = \(x) max(x, na.rm = TRUE)
-        ),
-        .names = "{.col}_{.fn}"
-      ),
-      .groups = "drop"
-    ) |>
-    tidyr::pivot_longer(dplyr::everything(), names_to = "Metric", values_to = "Value") |>
-    tidyr::separate(Metric, into = c("Metric", "Statistic"), sep = "_(?=[^_]+$)") |>
-    tidyr::pivot_wider(names_from = Metric, values_from = Value)
-}
+# Lap statistics: calculate_lap_stats(), calculate_multiple_laps() and
+# get_summary_stats() are in telemetry_core.R
 
 # =============================================================================
 # LABELING FOR TABLES ONLY

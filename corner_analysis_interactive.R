@@ -1,40 +1,18 @@
 options(shiny.maxRequestSize = 500 * 1024^2)
 
-# ---- Top-level utilities ----
-
-.ca_has_cols <- function(df, cols) all(cols %in% names(df))
-
-.ca_interp <- function(x, y, xout) {
-  ok <- is.finite(x) & is.finite(y)
-  x <- x[ok]; y <- y[ok]
-  if (length(x) < 2) return(rep(NA_real_, length(xout)))
-  ord <- order(x)
-  x <- x[ord]; y <- y[ord]
-  dup <- duplicated(x)
-  x <- x[!dup]; y <- y[!dup]
-  if (length(x) < 2) return(rep(NA_real_, length(xout)))
-  approx(x, y, xout, rule = 2)$y
-}
-
-# Per-sample time weights: (t[i+1] - t[i-1]) / 2 for interior samples,
-# single adjacent interval at the endpoints; equal weights if no usable timing
-.ca_time_weights <- function(t) {
-  n <- length(t)
-  if (n < 2) return(rep(1, n))
-  dt <- diff(as.numeric(t))
-  dt[!is.finite(dt) | dt < 0] <- NA
-  if (all(is.na(dt))) return(rep(1, n))
-  w <- rowMeans(cbind(c(NA, dt), c(dt, NA)), na.rm = TRUE)
-  w[!is.finite(w)] <- 0
-  w
-}
-
-.ca_lowpass <- function(x, cutoff_hz, fs) {
-  if (is.na(fs) || fs <= 0 || cutoff_hz <= 0 || cutoff_hz >= fs / 2) return(x)
-  W  <- cutoff_hz / (fs / 2)
-  bf <- signal::butter(2, W, type = "low")
-  as.numeric(signal::filtfilt(bf, x))
-}
+# Shared calculation functions (telemetry_core.R, same folder as this script):
+# has_cols(), interp_numeric(), lowpass_filter(), corner_summary_table(), ...
+local({
+  script_dir <- tryCatch(dirname(sys.frame(1)$ofile), error = function(e) NULL)
+  candidates <- c(file.path(script_dir, "telemetry_core.R"), "telemetry_core.R")
+  core <- candidates[file.exists(candidates)][1]
+  if (is.na(core)) {
+    stop("telemetry_core.R not found. Keep all toolkit files in one folder and open ",
+         "telemetry_to_insight.Rproj (or setwd() to that folder) before running this script.",
+         call. = FALSE)
+  }
+  source(core)
+})
 
 # ---- Window 1: Upload & Setup ----
 
@@ -332,14 +310,14 @@ options(shiny.maxRequestSize = 500 * 1024^2)
   }
   comp_labels <- lap_lbl(comp_laps)
 
-  g_axis_lim <- if (.ca_has_cols(telemetry, c("accGHorizontal", "accGFrontal"))) {
+  g_axis_lim <- if (has_cols(telemetry, c("accGHorizontal", "accGFrontal"))) {
     raw_max <- max(abs(c(telemetry$accGHorizontal, telemetry$accGFrontal)), na.rm = TRUE)
     ceiling(raw_max * 10) / 10
   } else {
     NULL
   }
 
-  max_brake_g <- if (.ca_has_cols(telemetry, "accGFrontal")) {
+  max_brake_g <- if (has_cols(telemetry, "accGFrontal")) {
     braking <- telemetry$accGFrontal[is.finite(telemetry$accGFrontal) & telemetry$accGFrontal < 0]
     if (length(braking) > 0) max(abs(braking)) else NA_real_
   } else {
@@ -402,7 +380,7 @@ options(shiny.maxRequestSize = 500 * 1024^2)
   # ---- traction circle ----
 
   plot_traction_circle <- function(df, grip_limit, axis_lim = NULL) {
-    if (!.ca_has_cols(df, c("accGHorizontal", "accGFrontal"))) {
+    if (!has_cols(df, c("accGHorizontal", "accGFrontal"))) {
       return(make_error_plot("accGHorizontal or accGFrontal not found in data"))
     }
 
@@ -440,7 +418,7 @@ options(shiny.maxRequestSize = 500 * 1024^2)
   # ---- speed trace ----
 
   plot_speed_trace <- function(df) {
-    if (!.ca_has_cols(df, c("carPositionNormalized", "speedKmh"))) {
+    if (!has_cols(df, c("carPositionNormalized", "speedKmh"))) {
       return(make_error_plot("speedKmh not found in data"))
     }
 
@@ -509,51 +487,8 @@ options(shiny.maxRequestSize = 500 * 1024^2)
 
   # ---- summary table ----
 
-  make_summary_table <- function(df) {
-    if (!.ca_has_cols(df, c("speedKmh", "lapTime", "carPositionNormalized"))) return(NULL)
-
-    df |>
-      group_by(lap_label) |>
-      summarise(
-        corner_time_s   = (.ca_interp(carPositionNormalized, lapTime, exit_pos) -
-                             .ca_interp(carPositionNormalized, lapTime, entry_pos)) / 1000,
-        entry_speed_kmh = .ca_interp(carPositionNormalized, speedKmh, entry_pos),
-        min_speed_kmh   = min(speedKmh[carPositionNormalized >= min(entry_pos, exit_pos) &
-                                        carPositionNormalized <= max(entry_pos, exit_pos)],
-                              na.rm = TRUE),
-        avg_speed_kmh   = {
-                           # time-weighted mean of in-corner samples
-                           in_s <- carPositionNormalized >= min(entry_pos, exit_pos) &
-                                   carPositionNormalized <= max(entry_pos, exit_pos)
-                           ord <- order(lapTime[in_s])
-                           v_s <- speedKmh[in_s][ord]
-                           w_s <- .ca_time_weights(lapTime[in_s][ord])
-                           ok  <- is.finite(v_s)
-                           if (!any(ok) || sum(w_s[ok]) <= 0) NA_real_
-                           else sum(v_s[ok] * w_s[ok]) / sum(w_s[ok])
-                         },
-        exit_speed_kmh  = .ca_interp(carPositionNormalized, speedKmh, exit_pos),
-        max_lat_g       = if (.ca_has_cols(df, "accGHorizontal"))
-                            max(abs(accGHorizontal[carPositionNormalized >= min(entry_pos, exit_pos) &
-                                                    carPositionNormalized <= max(entry_pos, exit_pos)]),
-                                na.rm = TRUE)
-                          else NA_real_,
-        max_brake_g     = if (.ca_has_cols(df, "accGFrontal")) {
-                            vals <- accGFrontal[carPositionNormalized >= min(entry_pos, exit_pos) &
-                                                carPositionNormalized <= max(entry_pos, exit_pos) &
-                                                accGFrontal < 0]
-                            if (length(vals) == 0) NA_real_ else max(abs(vals), na.rm = TRUE)
-                          } else NA_real_,
-        max_accel_g     = if (.ca_has_cols(df, "accGFrontal")) {
-                            vals <- accGFrontal[carPositionNormalized >= min(entry_pos, exit_pos) &
-                                                carPositionNormalized <= max(entry_pos, exit_pos) &
-                                                accGFrontal > 0]
-                            if (length(vals) == 0) NA_real_ else max(vals, na.rm = TRUE)
-                          } else NA_real_,
-        .groups = "drop"
-      ) |>
-      arrange(corner_time_s)
-  }
+  # Calculation in telemetry_core.R (corner_summary_table)
+  make_summary_table <- function(df) corner_summary_table(df, entry_pos, exit_pos)
 
   # ---- speed delta ----
 
@@ -561,7 +496,7 @@ options(shiny.maxRequestSize = 500 * 1024^2)
     if (is.null(ref_lap)) {
       return(make_error_plot("Choose a reference lap in the sidebar to see the delta."))
     }
-    if (!.ca_has_cols(df, c("speedKmh", "carPositionNormalized"))) {
+    if (!has_cols(df, c("speedKmh", "carPositionNormalized"))) {
       return(make_error_plot("speedKmh not found in data"))
     }
 
@@ -576,7 +511,7 @@ options(shiny.maxRequestSize = 500 * 1024^2)
       max(df$carPositionNormalized, na.rm = TRUE),
       length.out = 500
     )
-    ref_speed <- .ca_interp(ref_df$carPositionNormalized, ref_df$speedKmh, grid)
+    ref_speed <- interp_numeric(ref_df$carPositionNormalized, ref_df$speedKmh, grid)
 
     other_labels <- setdiff(unique(df$lap_label), ref_label)
     if (length(other_labels) == 0) {
@@ -585,7 +520,7 @@ options(shiny.maxRequestSize = 500 * 1024^2)
 
     delta_df <- purrr::map_dfr(other_labels, function(lbl) {
       other_df    <- df |> filter(lap_label == lbl)
-      other_speed <- .ca_interp(other_df$carPositionNormalized, other_df$speedKmh, grid)
+      other_speed <- interp_numeric(other_df$carPositionNormalized, other_df$speedKmh, grid)
       tibble(
         carPositionNormalized = grid,
         delta_kmh             = other_speed - ref_speed,
@@ -616,7 +551,7 @@ options(shiny.maxRequestSize = 500 * 1024^2)
     if (is.null(ref_lap)) {
       return(make_error_plot("Choose a reference lap in the sidebar to see the delta."))
     }
-    if (!.ca_has_cols(df, c("lapTime", "carPositionNormalized"))) {
+    if (!has_cols(df, c("lapTime", "carPositionNormalized"))) {
       return(make_error_plot("lapTime not found in data"))
     }
 
@@ -631,7 +566,7 @@ options(shiny.maxRequestSize = 500 * 1024^2)
       max(df$carPositionNormalized, na.rm = TRUE),
       length.out = 500
     )
-    ref_time <- .ca_interp(ref_df$carPositionNormalized, ref_df$lapTime, grid)
+    ref_time <- interp_numeric(ref_df$carPositionNormalized, ref_df$lapTime, grid)
 
     other_labels <- setdiff(unique(df$lap_label), ref_label)
     if (length(other_labels) == 0) {
@@ -640,7 +575,7 @@ options(shiny.maxRequestSize = 500 * 1024^2)
 
     delta_df <- purrr::map_dfr(other_labels, function(lbl) {
       other_df   <- df |> filter(lap_label == lbl)
-      other_time <- .ca_interp(other_df$carPositionNormalized, other_df$lapTime, grid)
+      other_time <- interp_numeric(other_df$carPositionNormalized, other_df$lapTime, grid)
       raw_delta  <- (ref_time - other_time) / 1000
       tibble(
         carPositionNormalized = grid,
@@ -744,7 +679,7 @@ options(shiny.maxRequestSize = 500 * 1024^2)
 
   plot_corner_map <- function(df, color_var = "speedKmh") {
     needed <- c("carCoordinatesX", "carCoordinatesZ", "carPositionNormalized", color_var)
-    if (!.ca_has_cols(df, needed)) {
+    if (!has_cols(df, needed)) {
       return(make_error_plot(paste("Column not found in data:", color_var)))
     }
 
@@ -907,13 +842,13 @@ options(shiny.maxRequestSize = 500 * 1024^2)
       )
 
       cutoff <- input$lateral_g_cutoff
-      if (!is.null(cutoff) && cutoff > 0 && .ca_has_cols(df, c("accGHorizontal", "lapTime"))) {
+      if (!is.null(cutoff) && cutoff > 0 && has_cols(df, c("accGHorizontal", "lapTime"))) {
         df <- df |>
           group_by(lap_label) |>
           group_modify(function(gdf, key) {
             dt_ms <- median(diff(gdf$lapTime), na.rm = TRUE)
             fs    <- if (!is.na(dt_ms) && dt_ms > 0) 1000 / dt_ms else NA_real_
-            gdf |> mutate(accGHorizontal = .ca_lowpass(accGHorizontal, cutoff, fs))
+            gdf |> mutate(accGHorizontal = lowpass_filter(accGHorizontal, cutoff, fs))
           }) |>
           ungroup()
       }

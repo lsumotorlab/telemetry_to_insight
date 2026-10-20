@@ -1,63 +1,27 @@
 # Validation of time-weighted metrics (reviewer revision, R2.2 / R1.10)
 # ===================================================================
 # Run from the project folder (open telemetry_to_insight.Rproj), then:
-#   source("validate_time_weighting.R")
+#   source("validation/validate_time_weighting.R")
 #
-# Part A: telemetry_validation.csv (uniform 500 ms sampling)
-#         -> new time-weighted results must equal the old arithmetic means.
+# Part A: telemetry_validation.csv (4 laps x 20 samples; each lap uniformly
+#         sampled at its own interval: 500, 1000, 1500, 2000 ms)
+#         -> time-weighted results must equal the arithmetic means of v1.0.0.
 # Part B: telemetry_validation_uneven.csv
 #         Lap 1 = irregular sampling, Lap 2 = same values at uniform 500 ms.
 #         -> results must equal hand-calculated expected values.
 #
-# The functions are extracted from the app scripts without launching any app.
+# Tests the functions in telemetry_core.R, the same code the apps use.
 
 suppressPackageStartupMessages({
   library(tidyverse)
 })
 
-stopifnot(
-  "Run this from the project folder" =
-    file.exists("telemetry_lap_level_summary_interactive.R")
-)
+root <- if (file.exists("telemetry_core.R")) "." else if (file.exists("../telemetry_core.R")) ".." else
+  stop("Run this from the project folder (open telemetry_to_insight.Rproj).", call. = FALSE)
+source(file.path(root, "telemetry_core.R"))
+vdir <- file.path(root, "validation")
 
 tol <- 1e-6
-
-# -----------------------------------------------------------------------------
-# Extract named function definitions (also nested inside app functions)
-# -----------------------------------------------------------------------------
-extract_functions <- function(file, fn_names, env = new.env()) {
-  walk <- function(e) {
-    if (!is.call(e)) return(invisible())
-    is_def <- identical(e[[1]], as.name("<-")) &&
-      is.name(e[[2]]) && as.character(e[[2]]) %in% fn_names &&
-      is.call(e[[3]]) && identical(e[[3]][[1]], as.name("function"))
-    if (is_def) {
-      eval(e, env)
-    } else {
-      args <- as.list(e)[-1]
-      for (i in seq_along(args)) if (is.call(args[[i]])) walk(args[[i]])
-    }
-  }
-  for (e in parse(file, keep.source = FALSE)) walk(e)
-  missing_fns <- setdiff(fn_names, ls(env, all.names = TRUE))
-  if (length(missing_fns) > 0) {
-    stop("Not found in ", file, ": ", paste(missing_fns, collapse = ", "))
-  }
-  env
-}
-
-summary_env <- extract_functions(
-  "telemetry_lap_level_summary_interactive.R",
-  c("time_weights", "time_pct", "time_mean", "calculate_lap_stats")
-)
-corner_env <- extract_functions(
-  "corner_analysis_interactive.R",
-  c(".ca_has_cols", ".ca_interp", ".ca_time_weights", "make_summary_table")
-)
-map_env <- extract_functions(
-  "track_mapping_interactive.R",
-  "time_pct"
-)
 
 # -----------------------------------------------------------------------------
 # Result collection
@@ -95,17 +59,15 @@ weighted_metrics <- c(
   "Avg Speed (km/h)", "ABS Active (%)", "TC Active (%)"
 )
 
-# Corner summary needs entry/exit positions from its (normally app) closure
+# Corner summary table for a corner from entry to exit (one row per lap)
 corner_summary <- function(df, entry, exit) {
-  corner_env$entry_pos <- entry
-  corner_env$exit_pos <- exit
-  corner_env$make_summary_table(df |> mutate(lap_label = as.character(lapCount)))
+  corner_summary_table(df |> mutate(lap_label = as.character(lapCount)), entry, exit)
 }
 
 # =============================================================================
 # PART A: original validation CSV (uniform sampling)
 # =============================================================================
-val <- read_csv("telemetry_validation.csv", show_col_types = FALSE)
+val <- read_csv(file.path(vdir, "telemetry_validation.csv"), show_col_types = FALSE)
 
 dt_by_lap <- val |>
   group_by(lapCount) |>
@@ -115,15 +77,16 @@ walk2(dt_by_lap$lapCount, dt_by_lap$dt, \(l, d) cat("  Lap", l, ":", d, "\n"))
 
 for (lap in sort(unique(val$lapCount))) {
   lap_data <- val |> filter(lapCount == lap)
-  new <- summary_env$calculate_lap_stats(val, lap)
+  new <- calculate_lap_stats(val, lap)
   old <- legacy_lap_stats(lap_data)
   for (m in weighted_metrics) {
     check("A uniform", paste0("Lap ", lap, " | ", m), old[[m]], new[[m]])
   }
+  # single-lap map subtitle: time_pct(cond, lap_time_weights(lap_data))
   check(
     "A uniform", paste0("Lap ", lap, " | Map: full throttle %"),
     old[["Full Throttle (%)"]],
-    map_env$time_pct(lap_data$gas > 0.99, lap_data$lapTime)
+    time_pct(lap_data$gas > 0.99, lap_time_weights(lap_data))
   )
 }
 
@@ -157,7 +120,7 @@ for (i in seq_len(nrow(corner_cmp))) {
 # Overlap       = 550 / 3500   (sample 4)
 # ABS           = 1000 / 3500, TC = 100 / 3500
 # Lap 2: same values, uniform 500 ms -> plain means (8 samples)
-uneven <- read_csv("telemetry_validation_uneven.csv", show_col_types = FALSE)
+uneven <- read_csv(file.path(vdir, "telemetry_validation_uneven.csv"), show_col_types = FALSE)
 
 expected_b <- tribble(
   ~lap, ~metric,                       ~expected,
@@ -182,16 +145,16 @@ expected_b <- tribble(
   2,    "Lap Time (s)",                4.0
 )
 
-stats_b <- map(c(1, 2), \(l) summary_env$calculate_lap_stats(uneven, l))
+stats_b <- map(c(1, 2), \(l) calculate_lap_stats(uneven, l))
 pwalk(expected_b, \(lap, metric, expected) {
   check("B uneven", paste0("Lap ", lap, " | ", metric), expected, stats_b[[lap]][[metric]])
 })
 
 lap1 <- uneven |> filter(lapCount == 1)
 check("B uneven", "Lap 1 | Map: full throttle %", 950 / 3500 * 100,
-      map_env$time_pct(lap1$gas > 0.99, lap1$lapTime))
+      time_pct(lap1$gas > 0.99, lap_time_weights(lap1)))
 check("B uneven", "Lap 1 | Map: overlap %", 550 / 3500 * 100,
-      map_env$time_pct(lap1$gas > 0.99 & lap1$brake > 0.01, lap1$lapTime))
+      time_pct(lap1$gas > 0.99 & lap1$brake > 0.01, lap_time_weights(lap1)))
 
 # Corner spanning all samples (0.1 to 0.8)
 corner_b <- corner_summary(uneven, 0.1, 0.8)
@@ -226,5 +189,5 @@ if (n_fail > 0) {
   cat("ALL CHECKS PASSED\n")
 }
 
-write_csv(results, "validation_time_weighting_results.csv")
-cat("Results saved to validation_time_weighting_results.csv\n")
+write_csv(results, file.path(vdir, "validation_time_weighting_results.csv"))
+cat("Results saved to validation/validation_time_weighting_results.csv\n")

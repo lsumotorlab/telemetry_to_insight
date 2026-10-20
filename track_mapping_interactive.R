@@ -1,5 +1,18 @@
 options(shiny.maxRequestSize = 500 * 1024^2)
 
+# Shared calculation functions (telemetry_core.R, same folder as this script)
+local({
+  script_dir <- tryCatch(dirname(sys.frame(1)$ofile), error = function(e) NULL)
+  candidates <- c(file.path(script_dir, "telemetry_core.R"), "telemetry_core.R")
+  core <- candidates[file.exists(candidates)][1]
+  if (is.na(core)) {
+    stop("telemetry_core.R not found. Keep all toolkit files in one folder and open ",
+         "telemetry_to_insight.Rproj (or setwd() to that folder) before running this script.",
+         call. = FALSE)
+  }
+  source(core)
+})
+
 track_mapping_interactive <- function(
     default_overlap_throttle_threshold = 0.99,
     default_overlap_brake_threshold = 0.01
@@ -18,31 +31,7 @@ track_mapping_interactive <- function(
   })
   filter <- dplyr::filter
   
-  lowpass_filter <- function(x, cutoff_hz, fs) {
-    if (is.na(fs) || fs <= 0 || cutoff_hz <= 0 || cutoff_hz >= fs / 2) return(x)
-    W <- cutoff_hz / (fs / 2)
-    bf <- signal::butter(2, W, type = "low")
-    as.numeric(signal::filtfilt(bf, x))
-  }
-
-  # Time share (%) of the lap where cond is TRUE. Per-sample weights:
-  # (t[i+1] - t[i-1]) / 2 for interior samples, single adjacent interval at
-  # the endpoints; equal weights if lapTime is missing or unusable.
-  time_pct <- function(cond, t = NULL) {
-    n <- length(cond)
-    if (n == 0) return(NA_real_)
-    w <- rep(1, n)
-    if (!is.null(t) && n >= 2) {
-      dt <- diff(as.numeric(t))
-      dt[!is.finite(dt) | dt < 0] <- NA
-      if (!all(is.na(dt))) {
-        w <- rowMeans(cbind(c(NA, dt), c(dt, NA)), na.rm = TRUE)
-        w[!is.finite(w)] <- 0
-      }
-    }
-    if (sum(w) <= 0) return(NA_real_)
-    sum(w[cond %in% TRUE]) / sum(w) * 100
-  }
+  # lowpass_filter(), time_pct() and lap_time_weights() are in telemetry_core.R
 
   downsample_for_plot <- function(df, max_points = 12000) {
     if (nrow(df) <= max_points) return(df)
@@ -137,7 +126,7 @@ track_mapping_interactive <- function(
     if (!all(need %in% names(lap_data))) stop("Missing columns: gas and speedKmh")
     # % computed on the full-resolution lap, before downsampling for plotting
     if ("lapTime" %in% names(lap_data)) lap_data <- lap_data %>% arrange(lapTime)
-    throttle_pct <- time_pct(lap_data$gas > throttle_threshold, lap_data$lapTime)
+    throttle_pct <- time_pct(lap_data$gas > throttle_threshold, lap_time_weights(lap_data))
     lap_data <- downsample_for_plot(lap_data)
     throttle_zones <- lap_data %>% filter(gas > throttle_threshold)
     ggplot(lap_data, aes(x = carCoordinatesX, y = carCoordinatesZ)) +
@@ -163,7 +152,7 @@ track_mapping_interactive <- function(
     if ("lapTime" %in% names(lap_data)) lap_data <- lap_data %>% arrange(lapTime)
     lap_data <- lap_data %>%
       mutate(overlap_flag = gas > throttle_threshold & brake > brake_threshold)
-    overlap_pct <- time_pct(lap_data$overlap_flag, lap_data$lapTime)
+    overlap_pct <- time_pct(lap_data$overlap_flag, lap_time_weights(lap_data))
     lap_data <- downsample_for_plot(lap_data)
     ggplot(lap_data, aes(x = carCoordinatesX, y = carCoordinatesZ)) +
       geom_path(color = "gray80", linewidth = 0.9) +

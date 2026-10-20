@@ -1,7 +1,7 @@
 # Validation of sector timing and composite-lap retiming (reviewer revision, R2.3 / R2.2)
 # ===================================================================
 # Run from the project folder (open telemetry_to_insight.Rproj), then:
-#   source("validate_composite_lap.R")
+#   source("validation/validate_composite_lap.R")
 #
 # Test laps have a known, non-constant speed. Position over time is an exact
 # formula, so true boundary-crossing times and sector times are known:
@@ -16,53 +16,19 @@
 #         equals the sum of the best sectors, and that the position-time
 #         relationship of each source lap is preserved inside every sector.
 #
-# The functions are extracted from the app scripts without launching any app.
+# Tests the functions in telemetry_core.R, the same code the apps use.
 
 suppressPackageStartupMessages({
   library(tidyverse)
 })
 
-stopifnot(
-  "Run this from the project folder" = file.exists("create_synthetic_lap.R")
-)
+root <- if (file.exists("telemetry_core.R")) "." else if (file.exists("../telemetry_core.R")) ".." else
+  stop("Run this from the project folder (open telemetry_to_insight.Rproj).", call. = FALSE)
+source(file.path(root, "telemetry_core.R"))
+vdir <- file.path(root, "validation")
 
 tol_ms <- 1      # timing tolerance (ms)
 tol_kmh <- 0.1   # speed tolerance (km/h)
-
-# -----------------------------------------------------------------------------
-# Extract named function definitions (also nested inside app functions)
-# -----------------------------------------------------------------------------
-extract_functions <- function(file, fn_names, env = new.env()) {
-  walk <- function(e) {
-    if (!is.call(e)) return(invisible())
-    is_def <- identical(e[[1]], as.name("<-")) &&
-      is.name(e[[2]]) && as.character(e[[2]]) %in% fn_names &&
-      is.call(e[[3]]) && identical(e[[3]][[1]], as.name("function"))
-    if (is_def) {
-      eval(e, env)
-    } else {
-      args <- as.list(e)[-1]
-      for (i in seq_along(args)) if (is.call(args[[i]])) walk(args[[i]])
-    }
-  }
-  for (e in parse(file, keep.source = FALSE)) walk(e)
-  missing_fns <- setdiff(fn_names, ls(env, all.names = TRUE))
-  if (length(missing_fns) > 0) {
-    stop("Not found in ", file, ": ", paste(missing_fns, collapse = ", "))
-  }
-  env
-}
-
-composite_env <- extract_functions(
-  "create_synthetic_lap.R",
-  c(".lap_unwrap", ".interp_extrap", "lap_time_at", "seg_duration",
-    "build_synthetic_lap_from_bounds", "resample_and_retime_synthetic_lap")
-)
-compare_env <- extract_functions(
-  "track_mapping_compare_interactive.R",
-  c("has_cols", "lap_unwrap", "interp_extrap", "lap_time_at", "seg_duration",
-    "compute_seg_times_synthetic", "compute_seg_times_real")
-)
 
 # -----------------------------------------------------------------------------
 # Result collection
@@ -181,11 +147,11 @@ for (sch in names(schemes)) {
     mutate(
       builder_ms = pmap_dbl(list(lap, start, end), \(L, s, e) {
         d <- tel |> filter(lapCount == L)
-        composite_env$seg_duration(d$carPositionNormalized, d$lapTime, s, e)
+        seg_duration(d$carPositionNormalized, d$lapTime, s, e)
       }),
       compare_ms = map2_dbl(lap, seg, \(L, k) {
         d <- tel |> filter(lapCount == L)
-        compare_env$compute_seg_times_real(d, bounds)[[as.character(k)]]
+        compute_seg_times_real(d, bounds)[[as.character(k)]]
       }),
       old_ms = pmap_dbl(list(lap, start, end), \(L, s, e) {
         old_seg_time(tel |> filter(lapCount == L), s, e)
@@ -255,8 +221,8 @@ retime_summary <- tibble()
 
 for (sch in c("10 Hz", "100 Hz")) {
   tel <- make_laps(schemes[[sch]])
-  built <- composite_env$build_synthetic_lap_from_bounds(tel, bounds)
-  comp <- composite_env$resample_and_retime_synthetic_lap(
+  built <- build_synthetic_lap_from_bounds(tel, bounds)
+  comp <- resample_and_retime_synthetic_lap(
     telemetry = tel, segments = built$segments, n_bins = 2000
   )
 
@@ -300,7 +266,7 @@ for (sch in c("10 Hz", "100 Hz")) {
         0, max(abs(comp$speedKmh - comp$expected_kmh)), tol_kmh)
 
   # Lap comparison script reads the sector times back from the composite lap
-  seg_back <- compare_env$compute_seg_times_synthetic(comp |> mutate(lapCount = 99))
+  seg_back <- compute_seg_times_synthetic(comp |> mutate(lapCount = 99))
   check("D composite", paste0(sch, " | max |error| sector times read by lap comparison (ms)"),
         0, max(abs(seg_back$times[as.character(best$seg)] - best$exact_ms)), tol_ms)
 
@@ -334,10 +300,11 @@ if (n_fail > 0) {
   cat("ALL CHECKS PASSED\n")
 }
 
-write_csv(results, "validation_composite_lap_results.csv")
+write_csv(results, file.path(vdir, "validation_composite_lap_results.csv"))
 write_csv(bind_rows(
   sector_summary |> mutate(test = "sector times"),
   retime_summary |> rename(old_max_abs_error_ms = old_method_max_abs_error_ms) |>
     mutate(test = "composite position-time")
-), "validation_composite_lap_old_vs_new.csv")
-cat("Results saved to validation_composite_lap_results.csv and validation_composite_lap_old_vs_new.csv\n")
+), file.path(vdir, "validation_composite_lap_old_vs_new.csv"))
+cat("Results saved to validation/validation_composite_lap_results.csv and",
+    "validation/validation_composite_lap_old_vs_new.csv\n")
