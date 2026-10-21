@@ -260,7 +260,7 @@ track_mapping_compare()
 | Flip horizontal / vertical | Mirror coordinates |
 | Comparison attribute | The telemetry channel to compare (speed, RPM, gear, gas, brake, steer, ABS, TC, lateral G, longitudinal G). When **lateral G** or **steer** is selected, `accGHorizontal` and `steer` are compared as their **absolute value** — left/right sign is dropped so both laps reflect cornering force magnitude and steering magnitude only. |
 | Gear encoding | *(visible when Gear is selected)* Remap raw gear values where 0=R, 1=N, 2–7 = gears 1–6 |
-| Interpolation points | Resolution of the common lap axis used for delta calculation (default 800) |
+| Interpolation points | Resolution of the common lap axis used for delta calculation (default 3000; fewer points can lower short peaks, see validation/validate_interpolation_peaks.R) |
 | Show hover data | Enable interactive tooltips |
 
 ### Four fixed panels

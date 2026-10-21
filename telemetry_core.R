@@ -347,7 +347,7 @@ prepare_lap_for_compare <- function(df) {
 
 # Both laps linearly interpolated onto a common grid of n_points track
 # positions; delta = comparison - reference
-resample_two_laps <- function(ref_df, cmp_df, vars, n_points = 800) {
+resample_two_laps <- function(ref_df, cmp_df, vars, n_points = 3000) {
   grid <- tibble::tibble(carPositionNormalized = seq(0, 1, length.out = n_points))
 
   out <- grid

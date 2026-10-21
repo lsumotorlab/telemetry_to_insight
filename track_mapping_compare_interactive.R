@@ -539,7 +539,7 @@ track_mapping_compare <- function() {
           condition = "input.attribute == 'gear'",
           checkboxInput("ac_gear_remap", "Set gear encoding (0=R, 1=N, 2–7 = gears 1–6)", value = FALSE)
         ),
-        numericInput("n_interp", "Interpolation points", value = 800, min = 200, max = 3000, step = 100),
+        numericInput("n_interp", "Interpolation points", value = 3000, min = 200, max = 10000, step = 100),
         checkboxInput("show_hover", "Show hover data", value = FALSE),
         tags$hr(),
         helpText(tags$b("Deltas are computed as comparison minus reference on a common normalized lap axis."))
