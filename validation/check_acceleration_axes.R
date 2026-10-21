@@ -11,8 +11,9 @@
 #
 # The data file is NOT part of the repository; set its path (and optionally
 # the lap to plot) before running, from the project folder:
-# real_file <- r"(yourfile.csv)"
-source("validation/check_acceleration_axes.R")
+#   real_file <- r"(yourfile.csv)"
+#   lap_to_plot <- 13          # optional; default = a typical lap (median number of samples)
+#   source("validation/check_acceleration_axes.R")
 #
 # Output: the correlation of each acceleration column with steer x speed^2
 # (all laps) and a plot of steering and the acceleration columns for one lap.

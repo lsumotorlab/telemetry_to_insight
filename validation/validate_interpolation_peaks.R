@@ -3,9 +3,9 @@
 # Run from the project folder (open telemetry_to_insight.Rproj), then:
 #   source("validation/validate_interpolation_peaks.R")
 # Optional real-data part (data file NOT in the repository):
-real_file <- r"(C:\Users\galzi\OneDrive - Lietuvos sporto universitetas\Research\Telemetry Methodology\paper\frontiers_sport_active_living\telemetry_example.csv)"
-real_lateral_col <- "accGVertical"
-source("validation/validate_interpolation_peaks.R")
+#   real_file <- r"(yourfile.csv)"
+#   real_lateral_col <- "accGVertical"   # optional: column holding lateral acceleration
+#   source("validation/validate_interpolation_peaks.R")
 #
 # Two tools resample laps by linear interpolation on a grid of track positions:
 #   - lap comparison: both laps on a common grid (default 3000 points since

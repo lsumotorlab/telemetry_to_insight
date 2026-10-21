@@ -5,9 +5,9 @@
 # part of the repository; set its path (and optionally the official track
 # length in metres) before running, from the project folder:
 #
-real_file <- r"(C:\Users\galzi\OneDrive - Lietuvos sporto universitetas\Research\Telemetry Methodology\paper\frontiers_sport_active_living\telemetry_example.csv)"
-official_track_length_m <- 1956          # optional
-source("validation/validate_real_lap_times.R")
+#   real_file <- r"(yourfile.csv)"
+#   official_track_length_m <- 1956          # optional
+#   source("validation/validate_real_lap_times.R")
 #
 # 1) Lap time: for each completed lap N, the official lap time is the
 #    "lastLap" value on the first sample of lap N+1. The toolkit lap time
