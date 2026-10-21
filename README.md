@@ -1,21 +1,85 @@
 # Telemetry Analysis Suite — Usage Guide
 
-A collection of interactive R/Shiny tools for racing telemetry analysis. The workflow proceeds in five sequential steps, each producing output that feeds the next.
+A collection of interactive R/Shiny tools for racing telemetry analysis. The toolkit consists of six Shiny apps and a shared function library:
+
+| File | Role |
+|------|------|
+| `telemetry_harmonizer_and_preprocessing.R` | Step 1: map raw columns to standard names, check units and data quality, filter laps |
+| `create_synthetic_lap.R` | Step 2: build a composite reference lap from the fastest sectors |
+| `telemetry_lap_level_summary_interactive.R` | Step 3: per-lap statistics, summary statistics, lap trends |
+| `track_mapping_interactive.R` | Step 4: single-lap track maps |
+| `track_mapping_compare_interactive.R` | Step 5: lap-to-lap comparison |
+| `corner_analysis_interactive.R` | Corner-by-corner analysis (any time after Step 1) |
+| `telemetry_core.R` | Shared function library: every calculation used by the apps (lap time, time-weighted metrics, sector and corner times, filtering, composite lap, harmonization), with the formulas documented in comments. Each app loads it automatically. |
+| `validation/` | Validation datasets, generator scripts, check scripts and their results (see [Validation](#validation)) |
 
 ---
 
-## Prerequisites
+## Requirements
 
-Install the required packages before running any script:
+- **R ≥ 4.1** (the code uses the native pipe `|>` and the `\(x)` function shorthand). RStudio is recommended but not required.
+- **R packages:** shiny, tidyverse (dplyr, tidyr, readr, purrr, ggplot2, tibble), plotly, gt, scales, viridis, lubridate, signal.
+
+The toolkit was tested with the following versions:
+
+| Software | Version |
+|----------|---------|
+| R | 4.4.1 |
+| shiny | 1.13.0 |
+| dplyr | 1.1.4 |
+| tidyr | 1.3.1 |
+| readr | 2.1.5 |
+| purrr | 1.1.0 |
+| ggplot2 | 3.5.2 |
+| tibble | 3.2.1 |
+| plotly | 4.11.0 |
+| gt | 1.3.0 |
+| scales | 1.3.0 |
+| viridis | 0.6.5 |
+| lubridate | 1.9.3 |
+| signal | 1.8.1 |
+
+## Installation
+
+1. Download the repository (GitHub: *Code → Download ZIP*, or the archived release on Zenodo, DOI in the paper) and unzip it, or clone it with git.
+2. Open `telemetry_to_insight.Rproj` in RStudio (or set the working directory to the repository folder).
+3. Install the packages once:
 
 ```r
 install.packages(c(
-  "shiny", "tidyverse", "readr", "plotly",
-  "ggplot2", "viridis", "gt", "scales",
-  "lubridate", "purrr", "tidyr", "dplyr",
-  "signal"
+  "shiny", "tidyverse", "plotly", "gt", "scales",
+  "viridis", "lubridate", "signal"
 ))
 ```
+
+4. Start an app by sourcing its script, e.g. `source("telemetry_harmonizer_and_preprocessing.R")`. Each script loads `telemetry_core.R` and launches its app; the app opens in the RStudio viewer or your browser. Stop the app (Esc in the console, or the stop button) before starting another one, and restart it after updating the code.
+
+---
+
+## Supported input
+
+- **Format:** a CSV file with a header row and **one row per telemetry sample** (files up to 500 MB). Column names and order do not matter: in Step 1 you map your columns to the standard names below (auto-suggested from common names).
+- **Tested with:** Assetto Corsa telemetry (~240 Hz). Other simulators and data loggers can be used if they provide the required channels; check the mapping, the *Units used* table and the lateral-acceleration check in Step 1.
+- **Conventions expected by the toolkit:**
+  - `lapCount` identifies the lap of each sample.
+  - `lapTime` is the time elapsed since the start of the current lap (resets to 0 at each start/finish crossing); milliseconds or seconds (auto-detected).
+  - `carPositionNormalized` is the position along the lap, from 0 at the start/finish line to 1 at the end of the lap (other ranges, e.g. metres, are rescaled automatically).
+  - Speed in km/h or m/s, accelerations in G or m/s² (auto-detected, or set manually).
+  - Sampling may be irregular and may contain missing values: time-weighted metrics, interpolated timing and the filter handle both (see `telemetry_core.R` and the validation scripts).
+- **Axis labels:** some loggers label the acceleration axes differently from their physical meaning (e.g., lateral acceleration stored as `accGVertical`). Step 1 checks which column follows steering × speed² and warns if the mapped lateral column does not.
+
+### Required columns per app
+
+The harmonized file from Step 1 always contains all standard columns (unmapped ones are empty). The table lists the columns that must contain values; other columns are optional and only the plots or metrics that use them are affected.
+
+| App | Must contain values | Used if present |
+|-----|---------------------|-----------------|
+| Step 1 Harmonize & Preprocess | `lapCount`, `lapTime` | `carPositionNormalized` (lap time, backward-movement check), `speedKmh`, `steer`, `isInPit`, accelerations (checks and filters) |
+| Step 2 Composite reference lap | `lapCount`, `lapTime`, `carPositionNormalized`, `carCoordinatesX`, `carCoordinatesZ` | all other channels (carried into the composite lap) |
+| Step 3 Lap Summary | `lapCount`, `lapTime`, `carPositionNormalized`, `carCoordinatesX`, `carCoordinatesZ` | `speedKmh`, `gas`, `brake`, `isAbsInAction`, `isTcInAction`, `accGHorizontal`, `accGFrontal` (the corresponding metrics) |
+| Step 4 Track Mapping | `lapCount`, `carCoordinatesX`, `carCoordinatesZ` | each plot needs its channel(s), e.g. `speedKmh`, `gear`, `brake`, `gas`, `carCoordinatesY` (elevation), `accGHorizontal` and `lapTime` (lateral G over time) |
+| Step 5 Lap Comparison | `lapCount`, `carPositionNormalized`, `carCoordinatesX`, `carCoordinatesZ` | `lapTime` (lap and sector times), the compared channel |
+| Corner Analysis | `lapCount`, `lapTime`, `carPositionNormalized`, `carCoordinatesX`, `carCoordinatesZ` | `speedKmh`, `gas`, `brake`, `accGHorizontal`, `accGFrontal` |
 
 ---
 
@@ -26,7 +90,7 @@ Raw CSV
    ↓
 [1] telemetry_harmonizer_and_preprocessing.R        → harmonized & filtered CSV
    ↓
-[2] create_synthetic_lap.R                          → CSV with synthetic lap appended
+[2] create_synthetic_lap.R                          → CSV with composite reference lap appended (optional)
    ↓
 [3] telemetry_lap_level_summary_interactive.R       → lap statistics & trends
    ↓
@@ -46,8 +110,7 @@ Any harmonized CSV can also be passed directly to:
 
 **Run:**
 ```r
-source("telemetry_harmonizer_and_preprocessing.R")
-run_telemetry_harmonize_and_preprocess_app()
+source("telemetry_harmonizer_and_preprocessing.R")   # launches the app
 ```
 
 **Purpose:** Maps your raw CSV columns to the standard column names expected by all downstream scripts, then applies quality filters to select clean racing laps.
@@ -58,7 +121,7 @@ run_telemetry_harmonize_and_preprocess_app()
 |-----|-------------|
 | **1 Preview** | Shows raw file contents and detected column names |
 | **2 Harmonize Mapping** | Maps raw columns to standard names (auto-suggested, manually adjustable). Click **Apply harmonization**. |
-| **3 Preprocess** | Shows lap overview before and after filtering. Click **Apply preprocessing**. |
+| **3 Preprocess** | Shows the data-quality report per lap, then the lap overview before and after filtering. Click **Apply preprocessing**. |
 
 ### Standard column names (output)
 
@@ -119,17 +182,16 @@ run_telemetry_harmonize_and_preprocess_app()
 
 ---
 
-## Step 2 — Create Synthetic Lap
+## Step 2 — Create a Composite Reference Lap
 
-**File:** `create_synthetic_lap.R`
+**File:** `create_synthetic_lap.R` (file and function names keep the earlier term "synthetic")
 
 **Run:**
 ```r
-source("create_synthetic_lap.R")
-synthetic_lap_interactive()
+source("create_synthetic_lap.R")   # launches the app
 ```
 
-**Purpose:** Constructs an optimal "synthetic" lap by dividing the track into sectors and using the best recorded sector time from any lap for each sector. The result is appended to your dataset as an additional lap.
+**Purpose:** Constructs a composite reference lap by dividing the track into sectors and taking each sector from the lap that was fastest in it. Each sector keeps the timing and channel values of its source lap (sector times from interpolated boundary crossings); the composite lap time is the sum of the best sector times. The result is appended to your dataset as an additional lap and marked in a `.synthetic` column. It is a reconstruction from separate laps, not a lap that was driven, and transitions at sector boundaries need not be physically continuous.
 
 ### Workflow (three sequential windows)
 
@@ -138,7 +200,7 @@ synthetic_lap_interactive()
 1. Upload the filtered/minimal CSV from Step 1.
 2. Optionally flip the track horizontally or vertically so it displays correctly.
 3. Select the **reference lap** — the lap whose track outline will be used to draw sector boundaries.
-4. Set **Resample bins** (number of data points in the synthetic lap; defaults to the length of the first lap).
+4. Set **Resample bins** (number of data points in the composite lap; defaults to the number of samples in the first lap).
 5. Set **Min samples per segment per lap** — minimum data points required for a sector to be eligible.
 6. Click **Continue to segment selection**.
 
@@ -153,10 +215,10 @@ synthetic_lap_interactive()
 **Window 3 — Preview & download**
 
 - A track map shows which source lap was used for each sector.
-- Click **Download updated CSV** to save the dataset with the synthetic lap appended.
-- The synthetic lap receives the next available lap number (max lap + 1).
+- Click **Download updated CSV** to save the dataset with the composite reference lap appended.
+- The composite lap receives the next available lap number (max lap + 1).
 
-> The downloaded CSV from this step is the recommended input for Steps 3–5 when you want to include the synthetic lap in your analysis.
+> The downloaded CSV from this step is the recommended input for Steps 3–5 and Corner Analysis when you want to include the composite reference lap. It is labelled in all apps and excluded from summary and consistency statistics.
 
 ---
 
@@ -166,8 +228,7 @@ synthetic_lap_interactive()
 
 **Run:**
 ```r
-source("telemetry_lap_level_summary_interactive.R")
-run_telemetry_app()
+source("telemetry_lap_level_summary_interactive.R")   # launches the app
 ```
 
 **Purpose:** Displays per-lap performance statistics and summary statistics across all selected laps. Useful for identifying outliers, tracking consistency, and comparing effort-related metrics.
@@ -176,20 +237,20 @@ run_telemetry_app()
 
 | Control | Description |
 |---------|-------------|
-| Upload CSV | Load the telemetry file (harmonized or with synthetic lap) |
+| Upload CSV | Load the telemetry file (harmonized, or with the composite reference lap) |
 | Flip horizontal / vertical | Mirror track coordinates if needed |
 | Full throttle threshold | % gas above which a sample counts as "full throttle" |
 | Braking threshold | % brake above which a sample counts as "braking" |
 | Lateral G low-pass cutoff | Cutoff (Hz, default 5; 0 = no filter) used for "Max Lateral G (filtered)". "Max Lateral G (raw)" is always unfiltered. There is no single correct cutoff: report the value used (shown in the table subtitle). |
 | Choose laps | Checkboxes to include/exclude individual laps |
-| Designate synthetic lap | Mark one lap as synthetic — it is excluded from summary statistics but shown in the lap table |
+| Designate the composite reference lap | Mark the composite reference lap (pre-selected if the file marks it) — it is excluded from summary statistics and lap trends but shown, labelled, in the lap table |
 
 ### Tabs
 
 | Tab | Contents |
 |-----|---------|
-| **Lap Statistics** | Per-lap table: lap time, full throttle %, braking %, brake/throttle overlap %, avg/max/min speed, ABS %, TC %, max lateral G (raw and filtered), max accel G, max brake G (unfiltered), and the lap's sampling rate (Hz). **Export CSV** button saves the displayed table. |
-| **Summary Statistics** | Mean, SD, Min, Max across all selected non-synthetic laps (statistics as rows, variables as columns). **Export CSV** button saves the displayed table. |
+| **Lap Statistics** | Per-lap table: lap time (interpolated return to the lap's own timing line), time-weighted full throttle %, braking %, brake/throttle overlap %, avg/max/min speed, ABS %, TC %, max lateral G (raw and filtered), max accel G, max brake G (unfiltered), and the lap's sampling rate (Hz). **Export CSV** button saves the displayed table. |
+| **Summary Statistics** | Mean, SD, Min, Max across all selected driven laps (composite reference lap excluded) (statistics as rows, variables as columns). **Export CSV** button saves the displayed table. |
 | **Lap Trend** | Line chart of any metric across laps — useful for spotting fatigue or warm-up effects |
 
 ---
@@ -200,8 +261,7 @@ run_telemetry_app()
 
 **Run:**
 ```r
-source("track_mapping_interactive.R")
-track_mapping_interactive()
+source("track_mapping_interactive.R")   # launches the app
 ```
 
 **Purpose:** Visualises telemetry channels overlaid on the track map for a single lap. Up to 4 plots can be displayed simultaneously.
@@ -248,8 +308,7 @@ track_mapping_interactive()
 
 **Run:**
 ```r
-source("track_mapping_compare_interactive.R")
-track_mapping_compare()
+source("track_mapping_compare_interactive.R")   # launches the app
 ```
 
 **Purpose:** Side-by-side comparison of two laps. Shows how a chosen telemetry attribute differs between the reference and comparison lap, both as a track map and as a trace over normalized lap position.
@@ -261,7 +320,7 @@ track_mapping_compare()
 | Upload CSV | Load telemetry file |
 | Select Lap A / Lap B | Choose the two laps to compare |
 | Reference lap | Which of A or B is the reference (delta = comparison − reference) |
-| Reference lap is synthetic | Labels the reference lap as synthetic in the plot titles |
+| Reference lap is the composite reference lap | Labels the reference lap as the composite reference lap in the plot titles |
 | Flip horizontal / vertical | Mirror coordinates |
 | Comparison attribute | The telemetry channel to compare (speed, RPM, gear, gas, brake, steer, ABS, TC, lateral G, longitudinal G). When **lateral G** or **steer** is selected, `accGHorizontal` and `steer` are compared as their **absolute value** — left/right sign is dropped so both laps reflect cornering force magnitude and steering magnitude only. |
 | Gear encoding | *(visible when Gear is selected)* Remap raw gear values where 0=R, 1=N, 2–7 = gears 1–6 |
@@ -287,17 +346,16 @@ Lap times for both selected laps are displayed above the plots in `M:SS.ss` form
 
 **Run:**
 ```r
-source("corner_analysis_interactive.R")
-corner_analysis()
+source("corner_analysis_interactive.R")   # launches the app
 ```
 
-**Purpose:** Deep-dive analysis of a single corner across multiple laps. You interactively define the corner boundaries on the track map and then explore traction, speed, throttle/brake, time deltas, and consistency metrics for every selected lap. Can be used at any point after Step 1 — no synthetic lap required.
+**Purpose:** Deep-dive analysis of a single corner across multiple laps. You interactively define the corner boundaries on the track map and then explore traction, speed, throttle/brake, time deltas, and consistency metrics for every selected lap. Can be used at any point after Step 1 — no composite reference lap required.
 
 ### Workflow (three sequential windows)
 
 **Window 1 — Upload & Setup**
 
-1. Upload the harmonized/filtered CSV from Step 1 (or Step 2 if you want the synthetic lap included).
+1. Upload the harmonized/filtered CSV from Step 1 (or Step 2 if you want the composite reference lap included; it is labelled and excluded from consistency statistics).
 2. Optionally flip coordinates horizontally (X) or vertically (Z) to orient the track correctly.
 3. Select a **reference lap** — its track outline is used for corner selection in Window 2.
 4. Click **Continue to corner selection**.
@@ -357,7 +415,7 @@ The main analysis app. The sidebar lets you adjust the pre/post buffer, select l
 | Step | Input | Output |
 |------|-------|--------|
 | 1 Harmonize & Preprocess | Any raw telemetry CSV | `*_harmonized.csv`, `*_filtered.csv`, `*_minimal.csv` |
-| 2 Synthetic Lap | Filtered/minimal CSV | CSV with synthetic lap row appended |
+| 2 Composite reference lap | Filtered/minimal CSV | CSV with the composite reference lap appended |
 | 3 Summary | Any harmonized CSV | On-screen tables and trend plots; CSV export for Lap Statistics and Summary Statistics |
 | 4 Track Mapping | Any harmonized CSV | On-screen interactive track maps |
 | 5 Lap Comparison | Any harmonized CSV | On-screen comparison maps and traces |
@@ -369,5 +427,38 @@ The main analysis app. The sidebar lets you adjust the pre/post buffer, select l
 
 - All scripts accept file uploads of up to **500 MB**.
 - Track orientation (flip horizontal/vertical) must be set consistently across all steps for the coordinate systems to match.
-- The synthetic lap is assigned the next available lap number automatically. Note this number when moving the file into Steps 3–5 so you can designate it correctly.
-- All plots use **Times New Roman, size 18** and `theme_classic()` for publication-ready output.
+- The composite reference lap is assigned the next available lap number automatically and marked in the `.synthetic` column, so the Lap Summary pre-selects it. Note its number in case you need to designate it manually.
+- Most plots use **Times New Roman, size 18** and `theme_classic()`.
+
+---
+
+## Validation
+
+All validation material is in the `validation/` folder. Run each check from the project folder (open `telemetry_to_insight.Rproj`); each script prints its checks and writes a results CSV to `validation/`. The checks use the same functions in `telemetry_core.R` as the apps.
+
+| Script | What it checks | Data | Result |
+|--------|----------------|------|--------|
+| `validate_time_weighting.R` | Time-weighted metrics: equal to arithmetic means under uniform sampling, and to hand-calculated values under irregular sampling | `telemetry_validation.csv` (4 laps × 20 samples, used for manual validation), `telemetry_validation_uneven.csv` (2 laps × 8 samples) | 57/57 checks |
+| `make_validation_stress.R` → `validate_stress.R` | Every lap-summary, corner and sector metric against exactly known true values, for nine recording problems (10/60/100 Hz, irregular sampling, 2-s dropout, 5% missing values, missing time stamps, missing channel, all combined at ~10 Hz) | `telemetry_validation_stress.csv` (generated) and `telemetry_validation_stress_expected.csv` (true values) | 162/162 checks |
+| `validate_composite_lap.R` | Sector times from interpolated boundary crossings (10, 60, 100 Hz, irregular) and construction of the composite reference lap | generated in the script | 30/30 checks |
+| `validate_interpolation_peaks.R` | How linear interpolation (lap comparison grid, composite lap) affects peak and minimum values | synthetic laps with known peaks; optional real session | interpolation never exceeds recorded extremes; attenuation reported |
+| `validate_filter.R` | Low-pass filter with uniform, alternating, irregular and missing-value sampling | synthetic signals | 18/18 checks |
+| `validate_real_lap_times.R` | Lap times against the simulator's official lap times, and distance per lap against the official track length | a real session file (not included; set `real_file`) | per-lap summary |
+| `check_acceleration_axes.R` | Which acceleration column holds lateral acceleration (correlation with steering × speed², and a plot of steering and the acceleration columns for one lap) | a real session file (not included; set `real_file`) | printed correlations and plot |
+
+```r
+source("validation/validate_time_weighting.R")
+source("validation/make_validation_stress.R")   # only needed to regenerate the stress dataset
+source("validation/validate_stress.R")
+source("validation/validate_composite_lap.R")
+source("validation/validate_filter.R")
+source("validation/validate_interpolation_peaks.R")
+
+# Real-data checks need a raw session file with an official lap-time column (not included):
+real_file <- "C:/path/to/telemetry.csv"
+official_track_length_m <- 1956                 # optional
+source("validation/validate_real_lap_times.R")
+source("validation/check_acceleration_axes.R")   # which column is lateral acceleration?
+real_lateral_col <- "accGVertical"               # if the logger labels lateral acceleration differently
+source("validation/validate_interpolation_peaks.R")
+```
