@@ -1267,6 +1267,38 @@ lap_overview_tbl <- function(telemetry) {
     arrange(lapCount)
 }
 
+# Check of one lap's normalized track position against the distance driven,
+# calculated independently from the car coordinates (time order, samples with
+# position and coordinates):
+#   u            = position unwrapped across the start/finish line
+#   Coverage     = (max u - min u), lap fraction; ~1 for a complete lap
+#   Deviation    = max |(u - u_first) / (u_last - u_first) - D / D_total|,
+#                  D = cumulative distance between consecutive car positions
+#                  (X, Z, and Y if available); lap fraction
+# Position is measured along the track's reference line and distance along the
+# driven line, so small deviations are expected; large ones indicate a wrong
+# or distorted position channel (or spins).
+position_check <- function(pos, t, x, z, y = NULL) {
+  if (is.null(y) || all(!is.finite(y))) y <- rep(0, length(pos))
+  ok <- is.finite(pos) & is.finite(t) & is.finite(x) & is.finite(z) & is.finite(y)
+  idx <- which(ok)
+  idx <- idx[order(t[idx])]
+  out <- list(coverage = NA_real_, deviation = NA_real_)
+  if (length(idx) < 3) return(out)
+
+  p <- pos[idx]
+  jump <- c(0, diff(p))
+  u <- p + cumsum(jump < -0.5) - cumsum(jump > 0.5)
+  out$coverage <- max(u) - min(u)
+
+  d <- c(0, cumsum(sqrt(diff(x[idx])^2 + diff(y[idx])^2 + diff(z[idx])^2)))
+  span_u <- u[length(u)] - u[1]
+  if (d[length(d)] > 0 && span_u > 0) {
+    out$deviation <- max(abs((u - u[1]) / span_u - d / d[length(d)]))
+  }
+  out
+}
+
 # Per-lap data-quality report, shown before the lap filters are applied.
 #   Sampling rate (Hz)     = (samples with a time stamp - 1) / (last - first time stamp)
 #   Median / max interval  = between consecutive distinct time stamps (ms)
@@ -1276,7 +1308,12 @@ lap_overview_tbl <- function(telemetry) {
 #   Moves backwards        = largest drop in track position, in time order
 #                            (start/finish crossing removed), > back_tol lap
 #                            fraction; lap comparison cannot represent this
-lap_quality_tbl <- function(telemetry, stop_speed_kmh = 10, back_tol = 0.005, gap_factor = 5) {
+#   Position coverage      = position_check() coverage (% of lap); flagged if
+#                            < pos_cov_min
+#   Position vs distance   = position_check() deviation (% of lap); flagged if
+#                            > pos_dev_max
+lap_quality_tbl <- function(telemetry, stop_speed_kmh = 10, back_tol = 0.005, gap_factor = 5,
+                            pos_cov_min = 0.95, pos_dev_max = 0.05) {
   if (!has_cols(telemetry, c("lapCount", "lapTime"))) return(tibble(lapCount = integer(0)))
   channels <- intersect(setdiff(required_fields, "lapCount"), names(telemetry))
 
@@ -1306,6 +1343,12 @@ lap_quality_tbl <- function(telemetry, stop_speed_kmh = 10, back_tol = 0.005, ga
       }
     }
 
+    pc <- list(coverage = NA_real_, deviation = NA_real_)
+    if (has_cols(d, c("carPositionNormalized", "carCoordinatesX", "carCoordinatesZ"))) {
+      pc <- position_check(d$carPositionNormalized, d$lapTime, d$carCoordinatesX, d$carCoordinatesZ,
+                           if ("carCoordinatesY" %in% names(d)) d$carCoordinatesY else NULL)
+    }
+
     lap_s <- if ("carPositionNormalized" %in% names(d)) {
       lap_time_estimate(d$carPositionNormalized, d$lapTime) / 1000
     } else {
@@ -1322,7 +1365,11 @@ lap_quality_tbl <- function(telemetry, stop_speed_kmh = 10, back_tol = 0.005, ga
       if (na_time > 0) "missing time stamps",
       if (any(miss >= 100)) paste0("channel missing: ", paste(names(miss)[miss >= 100], collapse = ", ")),
       if (is.finite(min_speed) && min_speed < stop_speed_kmh) "car (nearly) stopped",
-      if (is.finite(back) && back > back_tol) "moves backwards"
+      if (is.finite(back) && back > back_tol) "moves backwards",
+      if (is.finite(pc$coverage) && pc$coverage < pos_cov_min)
+        sprintf("position covers only %.0f%% of a lap", pc$coverage * 100),
+      if (is.finite(pc$deviation) && pc$deviation > pos_dev_max)
+        sprintf("position differs from distance driven by up to %.1f%% of a lap", pc$deviation * 100)
     )
 
     tibble(
@@ -1335,6 +1382,8 @@ lap_quality_tbl <- function(telemetry, stop_speed_kmh = 10, back_tol = 0.005, ga
       missing_time_stamps = na_time,
       min_speed_kmh = min_speed,
       max_backward_pct_lap = back * 100,
+      position_coverage_pct = pc$coverage * 100,
+      position_vs_distance_max_dev_pct = pc$deviation * 100,
       missing_values = missing_txt,
       flags = if (length(flags) > 0) paste(flags, collapse = "; ") else "OK"
     )

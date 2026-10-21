@@ -141,7 +141,11 @@ run_telemetry_harmonize_and_preprocess_app <- function() {
               "5 times the median interval. Missing values = % of samples without a value, per channel.",
               "'Car (nearly) stopped' = minimum speed below 10 km/h; 'moves backwards' = track position",
               "falls by more than 0.5% of a lap (e.g., a spin). Lap comparison cannot represent these",
-              "periods, so consider excluding such laps."
+              "periods, so consider excluding such laps. Position coverage = range of track position",
+              "within the lap (flagged below 95%). Position vs distance = largest difference between",
+              "track position and the distance driven (from the car coordinates), as % of a lap",
+              "(flagged above 5%); small differences are expected because position is measured along",
+              "the track's reference line and distance along the driven line."
             ),
             tableOutput("lap_quality"),
             downloadButton("download_quality", "Download data-quality report"),

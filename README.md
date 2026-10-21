@@ -157,7 +157,8 @@ source("telemetry_harmonizer_and_preprocessing.R")   # launches the app
 - **Track position** — rescaled to 0–1 by dividing by its maximum when the maximum exceeds 1.1 (e.g., metres or %).
 - **Units used** (tab 2, after *Apply harmonization*) — a table showing, for each variable, the unit setting, the input statistic that auto-detect used, the rule, and the result. If a result is wrong, select the unit manually and apply harmonization again.
 - **Lateral-acceleration check** (tab 2) — correlates each acceleration column with steering × speed²; lateral acceleration should follow it closely. A warning names a better-fitting column if the logger labels the axes differently.
-- **Data quality per lap** (tab 3) — sampling rate, median/maximum interval, long gaps, missing time stamps, % missing values per channel, minimum speed, backward movement, and flags (e.g., pit samples, car stopped, moves backwards). Downloadable as CSV.
+- **Data quality per lap** (tab 3) — sampling rate, median/maximum interval, long gaps, missing time stamps, % missing values per channel, minimum speed, backward movement, a check of the track-position channel, and flags (e.g., pit samples, car stopped, moves backwards). Downloadable as CSV.
+- **Track-position check** (part of the data-quality report) — the toolkit does not calculate normalized track position; it uses the position channel of the data source. Each lap's position is checked for **coverage** (range of position within the lap; flagged below 95%) and against the **distance driven**, calculated independently from the car coordinates (largest difference between position and distance fraction, as % of a lap; flagged above 5%). Small differences are expected, because position is measured along the track's reference line and distance along the driven line.
 
 ### Preprocessing filters
 
@@ -443,6 +444,7 @@ All validation material is in the `validation/` folder. Run each check from the 
 | `validate_composite_lap.R` | Sector times from interpolated boundary crossings (10, 60, 100 Hz, irregular) and construction of the composite reference lap | generated in the script | 30/30 checks |
 | `validate_interpolation_peaks.R` | How linear interpolation (lap comparison grid, composite lap) affects peak and minimum values | synthetic laps with known peaks; optional real session | interpolation never exceeds recorded extremes; attenuation reported |
 | `validate_filter.R` | Low-pass filter with uniform, alternating, irregular and missing-value sampling | synthetic signals | 18/18 checks |
+| `validate_position_check.R` | Track-position check: exact position, start offset at the timing line, distorted position, incomplete lap, missing coordinates | synthetic circular laps | all checks pass |
 | `validate_real_lap_times.R` | Lap times against the simulator's official lap times, and distance per lap against the official track length | a real session file (not included; set `real_file`) | per-lap summary |
 | `check_acceleration_axes.R` | Which acceleration column holds lateral acceleration (correlation with steering × speed², and a plot of steering and the acceleration columns for one lap) | a real session file (not included; set `real_file`) | printed correlations and plot |
 
@@ -452,6 +454,7 @@ source("validation/make_validation_stress.R")   # only needed to regenerate the 
 source("validation/validate_stress.R")
 source("validation/validate_composite_lap.R")
 source("validation/validate_filter.R")
+source("validation/validate_position_check.R")
 source("validation/validate_interpolation_peaks.R")
 
 # Real-data checks need a raw session file with an official lap-time column (not included):
