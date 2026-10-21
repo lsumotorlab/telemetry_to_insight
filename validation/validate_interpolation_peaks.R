@@ -222,11 +222,11 @@ if (exists("real_file") && file.exists(real_file)) {
 
   peaks_b <- map_dfr(flying, function(L) {
     d <- raw |> filter(lapCount == L, is.finite(lapTime)) |> arrange(lapTime)
-    fs <- 1000 / median(diff(d$lapTime))
+    fs <- sampling_rate_hz(d$lapTime)
     versions <- list(
       "Unfiltered" = d,
       "Low-pass 5 Hz (accelerations)" = d |>
-        mutate(across(c(accGHorizontal, accGFrontal), \(y) lowpass_filter(y, cutoff_hz, fs)))
+        mutate(across(c(accGHorizontal, accGFrontal), \(y) as.numeric(lowpass_lap(y, lapTime, cutoff_hz))))
     )
     imap_dfr(versions, function(dv, ver) {
       # Lap comparison uses absolute lateral G (as in the app)

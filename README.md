@@ -84,13 +84,17 @@ run_telemetry_harmonize_and_preprocess_app()
 | `isTcInAction` | TC active (0/1) |
 | `isInPit` | In pit lane (0/1) |
 | `accGHorizontal` | Lateral acceleration in G (left/right cornering force) |
-| `accGFrontal` | Longitudinal acceleration in G (positive = accelerating, negative = braking) |
+| `accGFrontal` | Longitudinal acceleration in G (positive = accelerating, negative = braking). Not filtered; peak values (e.g., Max Accel G) can reflect brief spikes such as gear shifts. |
 
 ### Harmonization options
 
-- **Auto convert speed** — detects m/s and converts to km/h automatically
+- **Input speed unit** — choose km/h, m/s, or Auto-detect. Auto-detect assumes km/h when the 99th percentile exceeds 120 or the median exceeds 50 (implausible in m/s); otherwise m/s, multiplied by 3.6.
 - **Input lap time unit** — choose Milliseconds, Seconds, or Auto-detect. Auto-detect assumes seconds when the median lap time is ≤ 1000 (since no real racing lap takes more than 1000 seconds) and converts by multiplying by 1000. Use the manual options if your data is ambiguous.
 - **Input acceleration unit** — choose how `accGHorizontal` and `accGFrontal` are stored in your source file. Options: Auto-detect, G forces, m/s². Auto-detect assumes m/s² when the 99th percentile of absolute values exceeds 10 (since 10 G is physically impossible, but 10 m/s² ≈ 1 G is normal). m/s² values are divided by 9.81 to convert to G.
+- **Track position** — rescaled to 0–1 by dividing by its maximum when the maximum exceeds 1.1 (e.g., metres or %).
+- **Units used** (tab 2, after *Apply harmonization*) — a table showing, for each variable, the unit setting, the input statistic that auto-detect used, the rule, and the result. If a result is wrong, select the unit manually and apply harmonization again.
+- **Lateral-acceleration check** (tab 2) — correlates each acceleration column with steering × speed²; lateral acceleration should follow it closely. A warning names a better-fitting column if the logger labels the axes differently.
+- **Data quality per lap** (tab 3) — sampling rate, median/maximum interval, long gaps, missing time stamps, % missing values per channel, minimum speed, backward movement, and flags (e.g., pit samples, car stopped, moves backwards). Downloadable as CSV.
 
 ### Preprocessing filters
 
@@ -176,6 +180,7 @@ run_telemetry_app()
 | Flip horizontal / vertical | Mirror track coordinates if needed |
 | Full throttle threshold | % gas above which a sample counts as "full throttle" |
 | Braking threshold | % brake above which a sample counts as "braking" |
+| Lateral G low-pass cutoff | Cutoff (Hz, default 5; 0 = no filter) used for "Max Lateral G (filtered)". "Max Lateral G (raw)" is always unfiltered. There is no single correct cutoff: report the value used (shown in the table subtitle). |
 | Choose laps | Checkboxes to include/exclude individual laps |
 | Designate synthetic lap | Mark one lap as synthetic — it is excluded from summary statistics but shown in the lap table |
 
@@ -183,7 +188,7 @@ run_telemetry_app()
 
 | Tab | Contents |
 |-----|---------|
-| **Lap Statistics** | Per-lap table: lap time, full throttle %, braking %, brake/throttle overlap %, avg/max/min speed, ABS %, TC %, max lateral G, max accel G, max brake G. **Export CSV** button saves the displayed table. |
+| **Lap Statistics** | Per-lap table: lap time, full throttle %, braking %, brake/throttle overlap %, avg/max/min speed, ABS %, TC %, max lateral G (raw and filtered), max accel G, max brake G (unfiltered), and the lap's sampling rate (Hz). **Export CSV** button saves the displayed table. |
 | **Summary Statistics** | Mean, SD, Min, Max across all selected non-synthetic laps (statistics as rows, variables as columns). **Export CSV** button saves the displayed table. |
 | **Lap Trend** | Line chart of any metric across laps — useful for spotting fatigue or warm-up effects |
 
@@ -212,7 +217,7 @@ track_mapping_interactive()
 | Gear encoding | *(visible when Gear map is selected)* Remap raw gear values where 0=R, 1=N, 2–7 = gears 1–6 (Assetto Corsa encoding) |
 | Brake threshold | *(visible when Braking zones is selected)* Minimum brake input to count as braking |
 | Throttle threshold | *(visible when Full throttle zones is selected)* Minimum gas input to count as full throttle |
-| Lateral G low-pass cutoff (Hz) | *(visible when Lateral G map or Lateral G over time is selected)* Butterworth 2nd-order zero-phase filter applied to `accGHorizontal`. Range 0–20 Hz; set to 0 for the raw signal. A cutoff of 2–5 Hz captures intentional steering inputs; values above 5 Hz likely reflect suspension or road noise. |
+| Lateral G low-pass cutoff (Hz) | *(visible when Lateral G map or Lateral G over time is selected)* Butterworth 2nd-order zero-phase filter applied to `accGHorizontal`. Range 0–20 Hz; set to 0 for the raw signal. Lower cutoffs remove more rapid fluctuations (e.g., kerbs, bumps, vibration) but also smooth genuine rapid changes and lower peak values. There is no single correct cutoff: choose one for your data and report the value used. The filter resamples each lap to an even time grid at its mean sampling rate, bridges missing values, and keeps missing samples missing; the plot subtitle shows the cutoff and the sampling rate. |
 | Overlap thresholds | *(visible when Brake/Throttle Overlap is selected)* Separate throttle and brake thresholds defining what counts as simultaneous overlap |
 | Show hover data | Enable interactive tooltips on the map |
 
@@ -306,7 +311,7 @@ corner_analysis()
 
 **Window 3 — Analysis**
 
-The main analysis app. The sidebar lets you adjust the pre/post buffer, select laps, choose a reference lap for deltas, and configure the grip limit.
+The main analysis app. The sidebar lets you adjust the pre/post buffer, select laps, choose a reference lap for deltas, and draw an optional reference circle.
 
 #### Sidebar controls
 
@@ -318,16 +323,17 @@ The main analysis app. The sidebar lets you adjust the pre/post buffer, select l
 | Reference lap | Lap used as the baseline for Speed Delta and Time Delta plots |
 | Show hover data | Enable interactive tooltips on all plots |
 | Corner map measure | Channel used to colour the Corner Map (Speed, Lateral G, Longitudinal G, Throttle, Brake) |
-| Grip limit (G) | Radius of the dashed circle on the Traction Circle. Auto-suggested as 90% of the maximum recorded braking G across all laps |
+| Reference circle radius (G) | Optional dashed circle on the Traction Circle, for visual reference only (blank = hidden, the default). It is not the car's grip limit, which depends on speed, load, tyres and direction and cannot be derived from the telemetry. |
+| Lateral G low-pass cutoff (Hz) | Optional filter for lateral acceleration (0 = no filter), applied to the whole lap before the corner is cut out. Affects the Traction Circle, Corner Map (Lateral G) and "Max Lateral G (filtered)"; "Max Lateral G (raw)" is always unfiltered. Longitudinal acceleration is not filtered. |
 
 #### Analysis tabs
 
 | Tab | What it shows |
 |-----|--------------|
-| **Traction Circle** | Lateral G vs longitudinal G scatter for all laps, with a user-defined grip limit circle |
+| **Traction Circle** | Lateral G vs longitudinal G scatter for all laps (a G-G diagram), with an optional illustrative reference circle. Axis range = 99.9th percentile of \|G\|, so single spikes (e.g., impacts) do not shrink the plot. |
 | **Speed Trace** | Speed (km/h) over normalized lap position; green/red dashed lines mark entry/exit |
 | **Throttle & Brake** | Gas and brake inputs faceted into two panels over normalized lap position |
-| **Corner Summary** | `gt` table — corner time (s), entry speed, min speed, average speed, exit speed per lap; sorted by fastest corner time; reference lap highlighted. **Export CSV** button saves the displayed table. |
+| **Corner Summary** | `gt` table — corner time (s), entry speed, min speed, average speed, exit speed, max lateral G (raw and filtered), max braking and acceleration G per lap; a note states the filter used; sorted by fastest corner time; reference lap highlighted. **Export CSV** button saves the displayed table. |
 | **Speed Delta** | Speed difference (km/h) vs the reference lap over normalized position; positive = faster |
 | **Time Delta** | Cumulative time gap (s) vs the reference lap; positive = faster |
 | **Corner Map** | XZ coordinate scatter coloured by the selected measure, one panel per lap |
@@ -339,7 +345,7 @@ The main analysis app. The sidebar lets you adjust the pre/post buffer, select l
 |--------|-----------|
 | `lapCount`, `carPositionNormalized`, `carCoordinatesX`, `carCoordinatesZ`, `lapTime` | Always |
 | `speedKmh` | Speed Trace, Corner Summary, Speed Delta, Time Delta, Corner Map |
-| `accGHorizontal`, `accGFrontal` | Traction Circle, grip limit suggestion |
+| `accGHorizontal`, `accGFrontal` | Traction Circle |
 | `gas`, `brake` | Throttle & Brake plot |
 
 > **Note:** The app works with whichever columns are present. Tabs or map measures that rely on a missing column will display an informative error message rather than crashing.

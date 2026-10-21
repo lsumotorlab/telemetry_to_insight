@@ -60,7 +60,8 @@ run_telemetry_app <- function(
     default_flip_horizontal = TRUE,
     default_flip_vertical = FALSE,
     default_full_throttle_threshold = 0.99,
-    default_braking_threshold = 0.01
+    default_braking_threshold = 0.01,
+    default_lateral_cutoff_hz = 5
 ) {
   
   ui <- fluidPage(
@@ -103,6 +104,19 @@ run_telemetry_app <- function(
           value = default_braking_threshold * 100,
           step = 1
         ),
+        sliderInput(
+          "lateral_cutoff",
+          "Lateral G low-pass cutoff (Hz)  [0 = no filter]",
+          min = 0,
+          max = 20,
+          value = default_lateral_cutoff_hz,
+          step = 0.5
+        ),
+        helpText("Used for 'Max Lateral G (filtered)'; 'Max Lateral G (raw)' is always unfiltered.",
+                 "Lower cutoffs remove more rapid fluctuations (e.g., kerbs, bumps, vibration) but",
+                 "also smooth genuine rapid changes and lower peak values. There is no single correct",
+                 "cutoff: choose one for your data and report the value used.",
+                 "Longitudinal acceleration is not filtered."),
         hr(),
         h4("Select Laps"),
         uiOutput("laps_ui"),
@@ -208,7 +222,8 @@ run_telemetry_app <- function(
         telemetry(),
         lap_numbers,
         full_throttle_threshold = full_throttle_thr,
-        braking_threshold = braking_thr
+        braking_threshold = braking_thr,
+        lateral_cutoff_hz = input$lateral_cutoff
       )
     })
     
@@ -236,7 +251,8 @@ run_telemetry_app <- function(
           title = "Lap Statistics",
           subtitle = paste0(
             "Base thresholds  Full Throttle: ", input$full_throttle_threshold, "%, ",
-            "Brake: ", input$braking_threshold, "%"
+            "Brake: ", input$braking_threshold, "%  |  Lateral G filter: ",
+            if (input$lateral_cutoff > 0) paste0(input$lateral_cutoff, " Hz low-pass") else "none"
           )
         ) |>
         gt::opt_interactive(use_pagination = TRUE, pagination_type = "jump")

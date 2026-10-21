@@ -31,7 +31,7 @@ track_mapping_interactive <- function(
   })
   filter <- dplyr::filter
   
-  # lowpass_filter(), lap_pct(), lap_times() and overlap_flag() are in telemetry_core.R
+  # lowpass_lap(), filter_subtitle(), lap_pct(), lap_times() and overlap_flag() are in telemetry_core.R
 
   downsample_for_plot <- function(df, max_points = 12000) {
     if (nrow(df) <= max_points) return(df)
@@ -241,15 +241,14 @@ track_mapping_interactive <- function(
   plot_lateral_g_map <- function(lap_data, lap_id, cutoff_hz = 0, base_family = "Times New Roman", base_size = 18) {
     if (!("accGHorizontal" %in% names(lap_data))) stop("Missing column: accGHorizontal")
     clim <- max(abs(lap_data$accGHorizontal), na.rm = TRUE)
+    fs <- NA_real_
     if ("lapTime" %in% names(lap_data)) {
-      dt_ms <- median(diff(lap_data$lapTime), na.rm = TRUE)
-      fs <- if (!is.na(dt_ms) && dt_ms > 0) 1000 / dt_ms else NA_real_
-      lap_data <- lap_data |> mutate(
-        accGHorizontal = lowpass_filter(accGHorizontal, cutoff_hz, fs)
-      )
+      filtered <- lowpass_lap(lap_data$accGHorizontal, lap_data$lapTime, cutoff_hz)
+      fs <- attr(filtered, "fs")
+      lap_data <- lap_data |> mutate(accGHorizontal = as.numeric(filtered))
     }
     lap_data <- downsample_for_plot(lap_data)
-    subtitle_parts <- if (cutoff_hz > 0) paste0("Low-pass: ", cutoff_hz, " Hz") else "No filter"
+    subtitle_parts <- filter_subtitle(cutoff_hz, fs)
     ggplot(lap_data, aes(x = carCoordinatesX, y = carCoordinatesZ)) +
       geom_path(color = "gray80", linewidth = 0.7) +
       geom_point(aes(color = accGHorizontal), size = 1.1, alpha = 0.85) +
@@ -268,15 +267,12 @@ track_mapping_interactive <- function(
   plot_lateral_g_time <- function(lap_data, lap_id, cutoff_hz = 0, base_family = "Times New Roman", base_size = 18) {
     need <- c("accGHorizontal", "lapTime")
     if (!all(need %in% names(lap_data))) stop(paste("Missing columns:", paste(setdiff(need, names(lap_data)), collapse = ", ")))
-    dt_ms <- median(diff(lap_data$lapTime), na.rm = TRUE)
-    fs <- if (!is.na(dt_ms) && dt_ms > 0) 1000 / dt_ms else NA_real_
-    if (cutoff_hz > 0) {
-      lap_data <- lap_data |> mutate(accGHorizontal = lowpass_filter(accGHorizontal, cutoff_hz, fs))
-    }
-    lap_data <- lap_data |> mutate(time_s = lapTime / 1000)
+    filtered <- lowpass_lap(lap_data$accGHorizontal, lap_data$lapTime, cutoff_hz)
+    fs <- attr(filtered, "fs")
+    lap_data <- lap_data |> mutate(accGHorizontal = as.numeric(filtered), time_s = lapTime / 1000)
     lap_data <- downsample_for_plot(lap_data)
     clim <- max(abs(lap_data$accGHorizontal), na.rm = TRUE)
-    subtitle_parts <- if (cutoff_hz > 0) paste0("Low-pass: ", cutoff_hz, " Hz") else "No filter"
+    subtitle_parts <- filter_subtitle(cutoff_hz, fs)
     ggplot(lap_data, aes(x = time_s, y = accGHorizontal)) +
       geom_hline(yintercept = 0, color = "gray60", linewidth = 0.5) +
       geom_line(color = "gray75", linewidth = 0.5) +
@@ -392,7 +388,7 @@ track_mapping_interactive <- function(
         conditionalPanel(
           condition = "input.plots && (input.plots.indexOf('Lateral G map') >= 0 || input.plots.indexOf('Lateral G over time') >= 0)",
           sliderInput("lateral_g_cutoff", "Lateral G low-pass cutoff (Hz)  [0 = no filter]", min = 0, max = 20, value = 0, step = 0.5),
-          helpText("A cutoff of 2–5 Hz captures the driver's intentional steering inputs. Values above 5 Hz likely reflect suspension dynamics or road surface irregularities rather than deliberate steering actions. Set to 0 to view the raw signal.")
+          helpText("Optional smoothing of lateral acceleration (zero-phase 2nd-order Butterworth). Lower cutoffs remove more rapid fluctuations (e.g., kerbs, bumps, vibration) but also smooth genuine rapid changes and lower peak values. There is no single correct cutoff: choose one for your data and report the value used (shown in the plot subtitle with the sampling rate). Set to 0 for the raw signal.")
         ),
         conditionalPanel(
           condition = "input.plots && input.plots.indexOf('Brake/Throttle Overlap') >= 0",

@@ -1,0 +1,19 @@
+case,check,expected,calculated,pass
+A uniform 100 Hz,max |lowpass_lap - lowpass_filter|,0,0,TRUE
+A uniform 100 Hz,sampling rate (Hz),100,100,TRUE
+B alternating 3/6 ms,sampling rate (Hz),222.22222222222223,222.22222222222223,TRUE
+B alternating 3/6 ms,NA positions preserved,0,0,TRUE
+B alternating 3/6 ms,1 Hz amplitude kept (ratio),1,0.9983018805056944,TRUE
+B alternating 3/6 ms,20 Hz amplitude left (fraction of 0.5),0,0.003363201887707263,TRUE
+"C 100 Hz, 5% NA",sampling rate (Hz),100,100,TRUE
+"C 100 Hz, 5% NA",NA positions preserved,300,300,TRUE
+"C 100 Hz, 5% NA",1 Hz amplitude kept (ratio),1,0.999098039652489,TRUE
+"C 100 Hz, 5% NA",20 Hz amplitude left (fraction of 0.5),0,0.006647503606878758,TRUE
+D irregular 5-15 ms,sampling rate (Hz),100.13298068601625,100.13298068601625,TRUE
+D irregular 5-15 ms,NA positions preserved,0,0,TRUE
+D irregular 5-15 ms,1 Hz amplitude kept (ratio),1,0.9969072898659068,TRUE
+D irregular 5-15 ms,20 Hz amplitude left (fraction of 0.5),0,0.004060209811715225,TRUE
+"E 100 Hz, 2 s dropped",sampling rate (Hz),96.66666666666667,96.66666666666667,TRUE
+"E 100 Hz, 2 s dropped",NA positions preserved,0,0,TRUE
+"E 100 Hz, 2 s dropped",1 Hz amplitude kept (ratio),1,0.9977760646496457,TRUE
+"E 100 Hz, 2 s dropped",20 Hz amplitude left (fraction of 0.5),0,0.001909079187241007,TRUE

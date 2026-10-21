@@ -124,11 +124,28 @@ run_telemetry_harmonize_and_preprocess_app <- function() {
             "2 Harmonize Mapping",
             uiOutput("mapping_ui"),
             verbatimTextOutput("mapping_note"),
+            verbatimTextOutput("lateral_check"),
             verbatimTextOutput("harmonize_status"),
+            h4("Units used"),
+            helpText("For each variable: the unit setting, the statistic of the input values used by",
+                     "auto-detect, the rule, and the result. If a result is wrong, choose the unit",
+                     "manually in the sidebar and click Apply harmonization again."),
+            tableOutput("units_report"),
             tableOutput("harm_preview")
           ),
           tabPanel(
             "3 Preprocess",
+            h4("Data quality per lap (harmonized data, before filters)"),
+            helpText(
+              "Sampling rate = samples per second of recorded time. Long gaps = intervals more than",
+              "5 times the median interval. Missing values = % of samples without a value, per channel.",
+              "'Car (nearly) stopped' = minimum speed below 10 km/h; 'moves backwards' = track position",
+              "falls by more than 0.5% of a lap (e.g., a spin). Lap comparison cannot represent these",
+              "periods, so consider excluding such laps."
+            ),
+            tableOutput("lap_quality"),
+            downloadButton("download_quality", "Download data-quality report"),
+            hr(),
             verbatimTextOutput("preprocess_status"),
             h4("Lap overview before"),
             tableOutput("lap_overview_before"),
@@ -206,6 +223,22 @@ run_telemetry_harmonize_and_preprocess_app <- function() {
       )
     })
     
+    # Updates as the mapping changes, so a different column can be tried at once
+    output$lateral_check <- renderText({
+      req(uploaded())
+      m <- mapping_values()
+      req(is.character(m))
+      chk <- check_lateral_channel(uploaded(), as.list(m))
+      if (is.null(chk$table) || nrow(chk$table) == 0) return(chk$message)
+      paste0(
+        chk$message,
+        "\nCorrelation with steering x speed^2 per column: ",
+        paste0(chk$table$column, " ", sprintf("%.2f", chk$table$r), collapse = ", ")
+      )
+    })
+
+    units_report <- reactiveVal(NULL)
+
     harmonized <- eventReactive(input$apply_harmonize, {
       req(uploaded())
       mapv <- mapping_values()
@@ -215,11 +248,17 @@ run_telemetry_harmonize_and_preprocess_app <- function() {
         speed_unit = input$speed_unit,
         lap_time_unit = input$lap_time_unit,
         acc_unit = input$acc_unit
-      ) |>
-        select_analysis_columns()
+      )
+      units_report(attr(out, "units_report"))
+      out <- select_analysis_columns(out)
       save_output_csv(out, "_harmonized")
       out
     }, ignoreNULL = TRUE)
+
+    output$units_report <- renderTable({
+      req(harmonized())
+      units_report()
+    })
     
     output$harmonize_status <- renderText({
       if (is.null(input$apply_harmonize) || input$apply_harmonize == 0) {
@@ -343,6 +382,20 @@ run_telemetry_harmonize_and_preprocess_app <- function() {
       paste(msg, collapse = "\n")
     })
     
+    lap_quality <- reactive({
+      req(harmonized())
+      lap_quality_tbl(harmonized())
+    })
+
+    output$lap_quality <- renderTable({
+      head(lap_quality(), n = 200)
+    }, digits = 1)
+
+    output$download_quality <- downloadHandler(
+      filename = function() paste0(upload_target_stem(), "_data_quality.csv"),
+      content = function(file) write_csv(lap_quality(), file)
+    )
+
     output$lap_overview_before <- renderTable({
       req(harmonized())
       head(lap_overview_tbl(harmonized()), n = 200)

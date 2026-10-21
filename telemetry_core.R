@@ -156,6 +156,59 @@ lowpass_filter <- function(x, cutoff_hz, fs) {
   as.numeric(signal::filtfilt(bf, x))
 }
 
+# Mean sampling rate (Hz) of one lap from its time stamps (ms):
+# (distinct time stamps - 1) / (last - first). Unlike 1000 / median interval,
+# this is correct when intervals alternate (e.g., 3 and 6 ms -> ~238 Hz, not 333).
+sampling_rate_hz <- function(t) {
+  t <- sort(unique(t[is.finite(t)]))
+  if (length(t) < 2 || t[length(t)] <= t[1]) return(NA_real_)
+  (length(t) - 1) / ((t[length(t)] - t[1]) / 1000)
+}
+
+# Low-pass filter for one lap's signal x with time stamps t (ms), robust to
+# irregular sampling and missing values:
+#   1. samples with a value and a time stamp, in time order
+#   2. linear interpolation onto an even time grid at the mean sampling rate
+#      (missing values and dropped samples bridged by their neighbours)
+#   3. lowpass_filter() on the even grid
+#   4. filtered signal interpolated back to the original time stamps
+# Samples that were NA (or have no time stamp) stay NA. The sampling rate used
+# is returned as attribute "fs". x is returned unchanged if cutoff_hz <= 0,
+# fewer than 10 valid samples exist, or the cutoff is not below Nyquist.
+lowpass_lap <- function(x, t, cutoff_hz) {
+  ok <- is.finite(x) & is.finite(t)
+  fs <- sampling_rate_hz(t)  # from all time stamps, as in the data-quality report
+  out <- x
+  attr(out, "fs") <- fs
+  if (cutoff_hz <= 0 || sum(ok) < 10 || is.na(fs) || cutoff_hz >= fs / 2) return(out)
+
+  ord <- order(t[ok])
+  tv <- t[ok][ord]
+  xv <- x[ok][ord]
+  keep <- !duplicated(tv)
+  tv <- tv[keep]
+  xv <- xv[keep]
+  grid <- seq(tv[1], tv[length(tv)], by = 1000 / fs)
+  y_grid <- lowpass_filter(stats::approx(tv, xv, xout = grid, rule = 2)$y, cutoff_hz, fs)
+
+  out[] <- NA_real_
+  out[ok] <- stats::approx(grid, y_grid, xout = t[ok], rule = 2)$y
+  attr(out, "fs") <- fs
+  out
+}
+
+# Plot subtitle stating the filter and the sampling rate it was based on
+filter_subtitle <- function(cutoff_hz, fs) {
+  rate <- if (is.finite(fs)) sprintf(" (sampling rate %.0f Hz)", fs) else ""
+  if (cutoff_hz > 0 && is.finite(fs) && cutoff_hz < fs / 2) {
+    paste0("Low-pass: ", cutoff_hz, " Hz", rate)
+  } else if (cutoff_hz > 0) {
+    paste0("No filter: cutoff not below half the sampling rate", rate)
+  } else {
+    paste0("No filter", rate)
+  }
+}
+
 # =============================================================================
 # Lap summary metrics
 # =============================================================================
@@ -167,12 +220,17 @@ lowpass_filter <- function(x, cutoff_hz, fs) {
 #   Brake/Throttle Overlap (%) = pct_w(gas > full_throttle_threshold & brake > braking_threshold)
 #   Avg Speed (km/h)           = mean_w(speedKmh)
 #   ABS / TC Active (%)        = pct_w(flag == 1)
-#   Max/Min Speed, Max Lateral G (absolute), Max Accel G, Max Brake G = sample extremes
+#   Max/Min Speed, Max Accel G, Max Brake G   = sample extremes (unfiltered)
+#   Max Lateral G (raw)        = max |accGHorizontal| of the recorded samples
+#   Max Lateral G (filtered)   = max |lowpass_lap(accGHorizontal, lapTime, lateral_cutoff_hz)|;
+#                                equals the raw value when lateral_cutoff_hz = 0
+#   Sampling Rate (Hz)         = sampling_rate_hz(lapTime), the rate the filter uses
 calculate_lap_stats <- function(
     telemetry,
     lap_num,
     full_throttle_threshold = 0.99,
-    braking_threshold = 0.01
+    braking_threshold = 0.01,
+    lateral_cutoff_hz = 0
 ) {
   lap_data <- telemetry |>
     dplyr::filter(lapCount == lap_num)
@@ -196,9 +254,15 @@ calculate_lap_stats <- function(
       `Min Speed (km/h)` = safe_min(speedKmh),
       `ABS Active (%)` = lap_pct(isAbsInAction == 1, lapTime),
       `TC Active (%)` = lap_pct(isTcInAction == 1, lapTime),
-      `Max Lateral G` = if ("accGHorizontal" %in% names(lap_data)) safe_max(abs(accGHorizontal)) else NA_real_,
+      `Max Lateral G (raw)` = if ("accGHorizontal" %in% names(lap_data)) safe_max(abs(accGHorizontal)) else NA_real_,
+      `Max Lateral G (filtered)` = if ("accGHorizontal" %in% names(lap_data)) {
+        safe_max(abs(as.numeric(lowpass_lap(accGHorizontal, lapTime, lateral_cutoff_hz))))
+      } else {
+        NA_real_
+      },
       `Max Accel G` = if ("accGFrontal" %in% names(lap_data)) safe_max(accGFrontal) else NA_real_,
       `Max Brake G` = if ("accGFrontal" %in% names(lap_data)) safe_min(accGFrontal) else NA_real_,
+      `Sampling Rate (Hz)` = sampling_rate_hz(lapTime),
       .groups = "drop"
     )
 }
@@ -207,7 +271,8 @@ calculate_multiple_laps <- function(
     telemetry,
     lap_numbers,
     full_throttle_threshold = 0.99,
-    braking_threshold = 0.01
+    braking_threshold = 0.01,
+    lateral_cutoff_hz = 0
 ) {
   lap_numbers <- as.integer(lap_numbers)
   purrr::map_dfr(
@@ -216,7 +281,8 @@ calculate_multiple_laps <- function(
       telemetry,
       x,
       full_throttle_threshold = full_throttle_threshold,
-      braking_threshold = braking_threshold
+      braking_threshold = braking_threshold,
+      lateral_cutoff_hz = lateral_cutoff_hz
     )
   )
 }
@@ -451,7 +517,10 @@ compute_seg_times_real <- function(raw_df, bounds) {
 #   Entry/Exit Speed   = speed linearly interpolated at entry/exit position
 #   Min Speed          = minimum sample speed inside the corner
 #   Avg Speed          = mean_w(speedKmh) of samples inside the corner (time-weighted)
-#   Max Lateral G      = max |accGHorizontal| inside the corner
+#   Max Lateral G (raw)      = max |accGHorizontal_raw| inside the corner (if the
+#                              app kept the unfiltered values; else not reported)
+#   Max Lateral G (filtered) = max |accGHorizontal| inside the corner (filtered
+#                              over the whole lap by the app; raw if cutoff = 0)
 #   Max Braking G      = max |accGFrontal| of negative values inside the corner
 #   Max Accel. G       = max accGFrontal of positive values inside the corner
 corner_summary_table <- function(df, entry_pos, exit_pos) {
@@ -472,6 +541,9 @@ corner_summary_table <- function(df, entry_pos, exit_pos) {
         lap_mean(speedKmh[in_s], lapTime[in_s])
       },
       exit_speed_kmh  = interp_numeric(carPositionNormalized, speedKmh, exit_pos),
+      max_lat_g_raw   = if (has_cols(df, "accGHorizontal_raw"))
+                          safe_max(abs(accGHorizontal_raw[carPositionNormalized >= lo & carPositionNormalized <= hi]))
+                        else NA_real_,
       max_lat_g       = if (has_cols(df, "accGHorizontal"))
                           safe_max(abs(accGHorizontal[carPositionNormalized >= lo & carPositionNormalized <= hi]))
                         else NA_real_,
@@ -943,6 +1015,64 @@ guess_mapping <- function(names_in) {
   res
 }
 
+# Lateral-acceleration plausibility check (harmonizer).
+# In a corner, lateral acceleration = v^2 / R and the steering angle is roughly
+# proportional to 1 / R, so lateral acceleration should follow steer x speed^2
+# (correlation close to +1 or -1; the sign depends on the logger's convention).
+# Every acceleration-like column of the uploaded file is correlated with
+# steer x speed^2. Loggers sometimes label the axes differently (e.g., lateral
+# acceleration stored as "accGVertical"), which this check reveals.
+#   Not checked : steering, speed or lateral acceleration not mapped, or constant
+#   OK          : |r| of the mapped column >= min_r and no other column fits
+#                 better by more than margin
+#   Warning     : otherwise; a better-fitting column is suggested if one exists
+check_lateral_channel <- function(df, mapping, min_r = 0.5, margin = 0.2) {
+  col_of <- function(field) {
+    v <- mapping[[field]]
+    if (is.null(v) || is.na(v) || v == "<none>" || !(v %in% names(df))) NA_character_ else v
+  }
+  lat_col <- col_of("accGHorizontal")
+  steer_col <- col_of("steer")
+  speed_col <- col_of("speedKmh")
+  if (anyNA(c(lat_col, steer_col, speed_col))) {
+    return(list(status = "not checked", message = "Lateral-acceleration check: not done (needs steering, speed and lateral acceleration mapped).", table = NULL))
+  }
+
+  proxy <- suppressWarnings(as.numeric(df[[steer_col]]) * as.numeric(df[[speed_col]])^2)
+  candidates <- names(df)[grepl("acc|lateral", tolower(names(df))) &
+                            vapply(df, is.numeric, logical(1))]
+  candidates <- union(lat_col, setdiff(candidates, c(steer_col, speed_col)))
+  r_of <- function(cn) {
+    x <- suppressWarnings(as.numeric(df[[cn]]))
+    ok <- is.finite(x) & is.finite(proxy)
+    if (sum(ok) < 100 || sd(x[ok]) == 0 || sd(proxy[ok]) == 0) return(NA_real_)
+    cor(x[ok], proxy[ok])
+  }
+  tbl <- tibble(column = candidates, r = vapply(candidates, r_of, numeric(1))) |>
+    arrange(desc(abs(r)))
+
+  r_lat <- tbl$r[tbl$column == lat_col]
+  if (!is.finite(r_lat)) {
+    return(list(status = "not checked", message = paste0("Lateral-acceleration check: not done (", lat_col, " or steering has no variation, e.g., synthetic data)."), table = tbl))
+  }
+  others <- tbl |> filter(column != lat_col, is.finite(r))
+  best <- if (nrow(others) > 0) others[1, ] else NULL
+  better <- !is.null(best) && abs(best$r) >= min_r && abs(best$r) > abs(r_lat) + margin
+
+  if (abs(r_lat) >= min_r && !better) {
+    list(status = "ok", table = tbl,
+         message = sprintf("Lateral-acceleration check: OK. %s follows steering x speed^2 (r = %.2f).", lat_col, r_lat))
+  } else if (better) {
+    list(status = "warning", table = tbl,
+         message = sprintf(paste0("Lateral-acceleration check: WARNING. %s does not follow steering x speed^2 (r = %.2f), but %s does (r = %.2f).\n",
+                                  "The logger may label the acceleration axes differently. Consider mapping %s to Lateral acceleration."),
+                           lat_col, r_lat, best$column, best$r, best$column))
+  } else {
+    list(status = "warning", table = tbl,
+         message = sprintf("Lateral-acceleration check: WARNING. %s does not follow steering x speed^2 (r = %.2f). Check the mapping.", lat_col, r_lat))
+  }
+}
+
 harmonize_telemetry <- function(df, mapping, speed_unit = c("auto", "kmh", "ms"), lap_time_unit = c("auto", "milliseconds", "seconds"), acc_unit = c("auto", "g", "ms2")) {
   speed_unit    <- match.arg(speed_unit)
   lap_time_unit <- match.arg(lap_time_unit)
@@ -1000,63 +1130,97 @@ harmonize_telemetry <- function(df, mapping, speed_unit = c("auto", "kmh", "ms")
     if (length(out_list[[f]]) == 1 && n > 1) out_list[[f]] <- rep(out_list[[f]], n)
   }
   
+  # Unit decisions are recorded in a report (attribute "units_report"): the
+  # setting, the statistic of the input values the auto rule uses, the rule,
+  # and the result. The statistic is shown for manual settings too.
+  report <- list()
+  add_report <- function(variable, column, setting, statistic, rule, decision) {
+    report[[length(report) + 1]] <<- tibble::tibble(
+      Variable = variable, `Input column` = column, Setting = setting,
+      `Input statistic` = statistic, `Auto-detect rule` = rule, Result = decision
+    )
+  }
+  col_name <- \(f) if (is.null(mapping[[f]]) || is.na(mapping[[f]])) NA_character_ else mapping[[f]]
+
   if (!all(is.na(out_list[["speedKmh"]]))) {
     svals <- out_list[["speedKmh"]]
+    # auto: use improved heuristics based on physical limits
+    # 120 m/s = 432 km/h (impossible for any race car) -> must already be km/h
+    # median > 50 m/s = 180 km/h average (unrealistic for m/s dataset) -> km/h
+    q99  <- quantile(svals, 0.99, na.rm = TRUE, names = FALSE)
+    med  <- median(svals, na.rm = TRUE)
     do_convert <- if (speed_unit == "ms") {
       TRUE
     } else if (speed_unit == "kmh") {
       FALSE
     } else {
-      # auto: use improved heuristics based on physical limits
-      # 120 m/s = 432 km/h (impossible for any race car) -> must already be km/h
-      # median > 50 m/s = 180 km/h average (unrealistic for m/s dataset) -> km/h
-      q99  <- quantile(svals, 0.99, na.rm = TRUE)
-      med  <- median(svals, na.rm = TRUE)
       is_kmh <- (is.finite(q99) && q99 > 120) || (is.finite(med) && med > 50)
       !is_kmh
     }
     if (do_convert) out_list[["speedKmh"]] <- out_list[["speedKmh"]] * 3.6
+    add_report("Speed", col_name("speedKmh"),
+               c(auto = "Auto-detect", kmh = "km/h", ms = "m/s")[[speed_unit]],
+               sprintf("99th percentile = %.1f; median = %.1f", q99, med),
+               "km/h if 99th percentile > 120 or median > 50, else m/s",
+               if (do_convert) "m/s -> multiplied by 3.6 (km/h)" else "km/h (unchanged)")
   }
-  
+
   if (!all(is.na(out_list[["lapTime"]]))) {
     lvals <- out_list[["lapTime"]]
+    # auto: no real racing lap exceeds 1000 seconds; if median <= 1000 values are in seconds
+    med <- median(lvals, na.rm = TRUE)
     do_convert <- if (lap_time_unit == "seconds") {
       TRUE
     } else if (lap_time_unit == "milliseconds") {
       FALSE
     } else {
-      # auto: no real racing lap exceeds 1000 seconds; if median <= 1000 values are in seconds
-      med <- median(lvals, na.rm = TRUE)
       is.finite(med) && med <= 1000
     }
     if (do_convert) out_list[["lapTime"]] <- out_list[["lapTime"]] * 1000
+    add_report("Lap time", col_name("lapTime"),
+               c(auto = "Auto-detect", milliseconds = "Milliseconds", seconds = "Seconds")[[lap_time_unit]],
+               sprintf("median = %.1f", med),
+               "seconds if median <= 1000, else milliseconds",
+               if (do_convert) "seconds -> multiplied by 1000 (ms)" else "milliseconds (unchanged)")
   }
-  
+
   if (!all(is.na(out_list[["carPositionNormalized"]]))) {
     mx <- suppressWarnings(max(out_list[["carPositionNormalized"]], na.rm = TRUE))
-    if (is.finite(mx) && mx > 1.1) {
+    rescale <- is.finite(mx) && mx > 1.1
+    if (rescale) {
       out_list[["carPositionNormalized"]] <- out_list[["carPositionNormalized"]] / mx
     }
+    add_report("Track position", col_name("carPositionNormalized"), "Automatic",
+               sprintf("maximum = %.3f", mx),
+               "divided by its maximum if maximum > 1.1 (e.g., metres or %)",
+               if (rescale) sprintf("divided by %.3f (0-1)", mx) else "0-1 (unchanged)")
   }
 
   for (acc_col in c("accGHorizontal", "accGFrontal")) {
     if (!all(is.na(out_list[[acc_col]]))) {
       avals <- out_list[[acc_col]]
+      # auto: if 99th percentile of absolute values > 10, values are almost certainly m/s²
+      # (10G is physically impossible for a race car; 10 m/s² ≈ 1G is normal)
+      q99 <- quantile(abs(avals), 0.99, na.rm = TRUE, names = FALSE)
       do_convert <- if (acc_unit == "ms2") {
         TRUE
       } else if (acc_unit == "g") {
         FALSE
       } else {
-        # auto: if 99th percentile of absolute values > 10, values are almost certainly m/s²
-        # (10G is physically impossible for a race car; 10 m/s² ≈ 1G is normal)
-        q99 <- quantile(abs(avals), 0.99, na.rm = TRUE)
         is.finite(q99) && q99 > 10
       }
       if (do_convert) out_list[[acc_col]] <- out_list[[acc_col]] / 9.81
+      add_report(field_labels[[acc_col]], col_name(acc_col),
+                 c(auto = "Auto-detect", g = "G", ms2 = "m/s²")[[acc_unit]],
+                 sprintf("99th percentile of |value| = %.2f", q99),
+                 "m/s² if 99th percentile of |value| > 10, else G",
+                 if (do_convert) "m/s² -> divided by 9.81 (G)" else "G (unchanged)")
     }
   }
-  
-  tibble::as_tibble(out_list)
+
+  out <- tibble::as_tibble(out_list)
+  attr(out, "units_report") <- dplyr::bind_rows(report)
+  out
 }
 
 # =============================================================================
@@ -1100,6 +1264,86 @@ lap_overview_tbl <- function(telemetry) {
         NA_character_
       )
     ) |>
+    arrange(lapCount)
+}
+
+# Per-lap data-quality report, shown before the lap filters are applied.
+#   Sampling rate (Hz)     = (samples with a time stamp - 1) / (last - first time stamp)
+#   Median / max interval  = between consecutive distinct time stamps (ms)
+#   Long gaps              = intervals > gap_factor x median interval
+#   Missing values         = % NA per channel (only channels with any NA listed)
+#   Car (nearly) stopped   = minimum speed < stop_speed_kmh
+#   Moves backwards        = largest drop in track position, in time order
+#                            (start/finish crossing removed), > back_tol lap
+#                            fraction; lap comparison cannot represent this
+lap_quality_tbl <- function(telemetry, stop_speed_kmh = 10, back_tol = 0.005, gap_factor = 5) {
+  if (!has_cols(telemetry, c("lapCount", "lapTime"))) return(tibble(lapCount = integer(0)))
+  channels <- intersect(setdiff(required_fields, "lapCount"), names(telemetry))
+
+  one_lap <- function(d) {
+    t <- sort(unique(d$lapTime[is.finite(d$lapTime)]))
+    dt <- diff(t)
+    med_dt <- if (length(dt) > 0) median(dt) else NA_real_
+    span_s <- if (length(t) > 1) (t[length(t)] - t[1]) / 1000 else NA_real_
+
+    na_pct <- vapply(channels, \(cn) mean(is.na(d[[cn]])) * 100, numeric(1))
+    miss <- na_pct[na_pct > 0]
+    missing_txt <- if (length(miss) > 0) {
+      paste0(names(miss), " ", ifelse(miss >= 100, "all", sprintf("%.1f%%", miss)), collapse = "; ")
+    } else {
+      "none"
+    }
+
+    back <- NA_real_
+    if ("carPositionNormalized" %in% names(d)) {
+      idx <- which(is.finite(d$carPositionNormalized) & is.finite(d$lapTime))
+      idx <- idx[order(d$lapTime[idx])]
+      p <- d$carPositionNormalized[idx]
+      if (length(p) > 1) {
+        jump <- c(0, diff(p))
+        u <- p + cumsum(jump < -0.5) - cumsum(jump > 0.5)
+        back <- max(cummax(u) - u)
+      }
+    }
+
+    lap_s <- if ("carPositionNormalized" %in% names(d)) {
+      lap_time_estimate(d$carPositionNormalized, d$lapTime) / 1000
+    } else {
+      safe_max(d$lapTime) / 1000
+    }
+    pit_n <- if ("isInPit" %in% names(d)) sum(d$isInPit == 1, na.rm = TRUE) else 0L
+    n_gaps <- if (is.finite(med_dt)) sum(dt > gap_factor * med_dt) else 0L
+    min_speed <- if ("speedKmh" %in% names(d)) safe_min(d$speedKmh) else NA_real_
+    na_time <- sum(is.na(d$lapTime))
+
+    flags <- c(
+      if (pit_n > 0) "pit samples",
+      if (n_gaps > 0) sprintf("%d long gap(s), longest %.0f ms", n_gaps, max(dt)),
+      if (na_time > 0) "missing time stamps",
+      if (any(miss >= 100)) paste0("channel missing: ", paste(names(miss)[miss >= 100], collapse = ", ")),
+      if (is.finite(min_speed) && min_speed < stop_speed_kmh) "car (nearly) stopped",
+      if (is.finite(back) && back > back_tol) "moves backwards"
+    )
+
+    tibble(
+      samples = nrow(d),
+      lap_time_s = lap_s,
+      sampling_hz = if (is.finite(span_s) && span_s > 0) (length(t) - 1) / span_s else NA_real_,
+      median_interval_ms = med_dt,
+      max_interval_ms = if (length(dt) > 0) max(dt) else NA_real_,
+      long_gaps = n_gaps,
+      missing_time_stamps = na_time,
+      min_speed_kmh = min_speed,
+      max_backward_pct_lap = back * 100,
+      missing_values = missing_txt,
+      flags = if (length(flags) > 0) paste(flags, collapse = "; ") else "OK"
+    )
+  }
+
+  telemetry |>
+    group_by(lapCount) |>
+    group_modify(\(d, key) one_lap(d)) |>
+    ungroup() |>
     arrange(lapCount)
 }
 

@@ -40,7 +40,7 @@ B uneven,Lap 1 | TC Active (%),2.857142857142857,2.857142857142857,0,TRUE
 B uneven,Lap 1 | Lap Time (s),3.5,3.5,0,TRUE
 B uneven,Lap 1 | Max Speed (km/h),200,200,0,TRUE
 B uneven,Lap 1 | Min Speed (km/h),100,100,0,TRUE
-B uneven,Lap 1 | Max Lateral G,1,1,0,TRUE
+B uneven,Lap 1 | Max Lateral G (raw),1,1,0,TRUE
 B uneven,Lap 1 | Max Accel G,0.5,0.5,0,TRUE
 B uneven,Lap 1 | Max Brake G,-1.2,-1.2,0,TRUE
 B uneven,Lap 2 | Avg Speed (km/h),162.5,162.5,0,TRUE

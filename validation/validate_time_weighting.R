@@ -133,7 +133,7 @@ expected_b <- tribble(
   1,    "Lap Time (s)",                3.5,
   1,    "Max Speed (km/h)",            200,
   1,    "Min Speed (km/h)",            100,
-  1,    "Max Lateral G",               1.0,
+  1,    "Max Lateral G (raw)",         1.0,
   1,    "Max Accel G",                 0.5,
   1,    "Max Brake G",                 -1.2,
   2,    "Avg Speed (km/h)",            1300 / 8,

@@ -1,7 +1,7 @@
 options(shiny.maxRequestSize = 500 * 1024^2)
 
 # Shared calculation functions (telemetry_core.R, same folder as this script):
-# has_cols(), interp_numeric(), lowpass_filter(), corner_summary_table(), ...
+# has_cols(), interp_numeric(), lowpass_lap(), corner_summary_table(), ...
 local({
   script_dir <- tryCatch(dirname(sys.frame(1)$ofile), error = function(e) NULL)
   candidates <- c(file.path(script_dir, "telemetry_core.R"), "telemetry_core.R")
@@ -310,24 +310,22 @@ local({
   }
   comp_labels <- lap_lbl(comp_laps)
 
+  # Axis range of the traction circle: 99.9th percentile of |G|, so single
+  # spikes (e.g., impacts) do not shrink the plot; more extreme points fall
+  # outside the visible range
   g_axis_lim <- if (has_cols(telemetry, c("accGHorizontal", "accGFrontal"))) {
-    raw_max <- max(abs(c(telemetry$accGHorizontal, telemetry$accGFrontal)), na.rm = TRUE)
-    ceiling(raw_max * 10) / 10
+    g_abs <- abs(c(telemetry$accGHorizontal, telemetry$accGFrontal))
+    ceiling(stats::quantile(g_abs, 0.999, na.rm = TRUE, names = FALSE) * 10) / 10
   } else {
     NULL
   }
 
-  max_brake_g <- if (has_cols(telemetry, "accGFrontal")) {
-    braking <- telemetry$accGFrontal[is.finite(telemetry$accGFrontal) & telemetry$accGFrontal < 0]
-    if (length(braking) > 0) max(abs(braking)) else NA_real_
-  } else {
-    NA_real_
-  }
-  recommended_grip <- if (is.finite(max_brake_g)) round(max_brake_g * 0.9, 2) else NA_real_
-
   # ---- data ----
 
-  get_corner_data <- function(pre_sec, post_sec, selected_laps) {
+  # Lateral G is filtered over the whole lap before the corner window is cut,
+  # so the filter's start-up at the window edges does not affect the corner.
+  # accGHorizontal_raw keeps the unfiltered values for "Max Lateral G (raw)".
+  get_corner_data <- function(pre_sec, post_sec, selected_laps, cutoff_hz = 0) {
     purrr::map_dfr(selected_laps, function(lid) {
       lap_df <- telemetry |>
         filter(lapCount == lid) |>
@@ -335,6 +333,12 @@ local({
         arrange(carPositionNormalized)
 
       if (nrow(lap_df) < 2) return(tibble())
+
+      if (has_cols(lap_df, "accGHorizontal")) {
+        lap_df <- lap_df |>
+          mutate(accGHorizontal_raw = accGHorizontal,
+                 accGHorizontal = as.numeric(lowpass_lap(accGHorizontal, lapTime, cutoff_hz)))
+      }
 
       entry_idx <- which.min(abs(lap_df$carPositionNormalized - entry_pos))
       exit_idx  <- which.min(abs(lap_df$carPositionNormalized - exit_pos))
@@ -379,13 +383,16 @@ local({
 
   # ---- traction circle ----
 
-  plot_traction_circle <- function(df, grip_limit, axis_lim = NULL) {
+  # Optional dashed circle of a user-chosen radius, for visual reference only.
+  # It is not the car's grip limit, which depends on speed, load, tyres and
+  # direction and cannot be derived from these data.
+  plot_traction_circle <- function(df, ref_radius, axis_lim = NULL) {
     if (!has_cols(df, c("accGHorizontal", "accGFrontal"))) {
       return(make_error_plot("accGHorizontal or accGFrontal not found in data"))
     }
 
     theta     <- seq(0, 2 * pi, length.out = 300)
-    radius    <- grip_limit
+    radius    <- ref_radius
 
     p <- ggplot(df, aes(x = accGHorizontal, y = accGFrontal, color = lap_label))
 
@@ -407,7 +414,7 @@ local({
         y       = "Longitudinal G",
         color   = NULL,
         caption = if (is.numeric(radius) && is.finite(radius) && radius > 0)
-                    sprintf("Dashed circle = %.2f G (user defined)", radius)
+                    sprintf("Dashed circle = %.2f G reference (illustrative; not the car's grip limit)", radius)
                   else
                     NULL
       ) +
@@ -612,10 +619,10 @@ local({
       mutate(lap_num = as.integer(sub("^Lap (\\d+).*$", "\\1", lap_label))) |>
       arrange(lap_num) |>
       select(lap_label, lap_num, corner_time_s, entry_speed_kmh, min_speed_kmh, exit_speed_kmh,
-             any_of(c("max_lat_g", "max_brake_g", "max_accel_g"))) |>
+             any_of(c("max_lat_g_raw", "max_lat_g", "max_brake_g", "max_accel_g"))) |>
       pivot_longer(
         cols      = c(corner_time_s, entry_speed_kmh, min_speed_kmh, exit_speed_kmh,
-                      any_of(c("max_lat_g", "max_brake_g", "max_accel_g"))),
+                      any_of(c("max_lat_g_raw", "max_lat_g", "max_brake_g", "max_accel_g"))),
         names_to  = "metric",
         values_to = "value"
       ) |>
@@ -624,7 +631,8 @@ local({
         entry_speed_kmh = "Entry Speed (km/h)",
         min_speed_kmh   = "Min Speed (km/h)",
         exit_speed_kmh  = "Exit Speed (km/h)",
-        max_lat_g       = "Max Lateral G",
+        max_lat_g_raw   = "Max Lateral G (raw)",
+        max_lat_g       = "Max Lateral G (filtered)",
         max_brake_g     = "Max Braking G",
         max_accel_g     = "Max Accel. G"
       ))
@@ -770,19 +778,24 @@ local({
                                  "Brake"           = "brake"),
                     selected = "speedKmh"),
         tags$hr(),
-        numericInput("grip_limit", "Grip limit (G) — leave blank to hide circle",
-                     value = recommended_grip, min = 0.1, step = 0.1),
-        if (is.finite(recommended_grip))
-          tags$small(style = "color: #666;",
-            sprintf("Suggested: %.2f G  (90%% of max braking %.2f G across all laps)",
-                    recommended_grip, max_brake_g)),
+        numericInput("ref_circle", "Reference circle radius (G) — leave blank to hide",
+                     value = NA, min = 0.1, step = 0.1),
+        tags$small(style = "color: #666;",
+          "Draws a dashed circle on the Traction Circle for visual reference only.",
+          "It is not the car's grip limit, which depends on speed, load, tyres and",
+          "direction and cannot be derived from these data."),
         tags$hr(),
         sliderInput("lateral_g_cutoff",
                     "Lateral G low-pass cutoff (Hz)  [0 = no filter]",
                     min = 0, max = 20, value = 0, step = 0.5),
-        helpText("2–5 Hz captures driver steering inputs. Above 5 Hz likely reflects",
-                 "suspension or road surface noise. Set to 0 for the raw signal.",
-                 "Affects: Traction Circle, Corner Map (Lateral G), max_lat_g in summary tables.")
+        helpText("Optional smoothing of lateral acceleration (zero-phase 2nd-order Butterworth).",
+                 "Lower cutoffs remove more rapid fluctuations (e.g., kerbs, bumps, vibration) but",
+                 "also smooth genuine rapid changes and lower peak values. There is no single correct",
+                 "cutoff: choose one for your data and report the value used. Set to 0 for the raw signal.",
+                 "Applied to the whole lap before the corner is cut out. Affects: Traction Circle,",
+                 "Corner Map (Lateral G), 'Max Lateral G (filtered)' in the tables; 'Max Lateral G (raw)'",
+                 "is always unfiltered.",
+                 "Longitudinal acceleration is not filtered.")
       ),
       mainPanel(
         tabsetPanel(
@@ -835,25 +848,13 @@ local({
       laps <- as.integer(input$selected_laps)
       if (length(laps) == 0) return(NULL)
 
-      df <- get_corner_data(
+      cutoff <- input$lateral_g_cutoff
+      get_corner_data(
         pre_sec       = input$pre_buf,
         post_sec      = input$post_buf,
-        selected_laps = laps
+        selected_laps = laps,
+        cutoff_hz     = if (is.null(cutoff)) 0 else cutoff
       )
-
-      cutoff <- input$lateral_g_cutoff
-      if (!is.null(cutoff) && cutoff > 0 && has_cols(df, c("accGHorizontal", "lapTime"))) {
-        df <- df |>
-          group_by(lap_label) |>
-          group_modify(function(gdf, key) {
-            dt_ms <- median(diff(gdf$lapTime), na.rm = TRUE)
-            fs    <- if (!is.na(dt_ms) && dt_ms > 0) 1000 / dt_ms else NA_real_
-            gdf |> mutate(accGHorizontal = lowpass_filter(accGHorizontal, cutoff, fs))
-          }) |>
-          ungroup()
-      }
-
-      df
     })
 
     ref_lap_rv <- reactive({
@@ -864,7 +865,7 @@ local({
 
     output$plot_tc <- renderPlotly({
       df <- corner_data_rv(); req(df)
-      safe_plot(plot_traction_circle(df, input$grip_limit, axis_lim = g_axis_lim), input$show_hover)
+      safe_plot(plot_traction_circle(df, input$ref_circle, axis_lim = g_axis_lim), input$show_hover)
     })
 
     output$plot_speed <- renderPlotly({
@@ -897,11 +898,17 @@ local({
           min_speed_kmh   = "Min Speed (km/h)",
           avg_speed_kmh   = "Avg Speed (km/h)",
           exit_speed_kmh  = "Exit Speed (km/h)",
-          max_lat_g       = "Max Lateral G",
+          max_lat_g_raw   = "Max Lateral G (raw)",
+          max_lat_g       = "Max Lateral G (filtered)",
           max_brake_g     = "Max Braking G",
           max_accel_g     = "Max Accel. G"
         ) |>
         fmt_number(columns = where(is.numeric), decimals = 2) |>
+        tab_source_note(paste0(
+          "Lateral G filter: ",
+          if (isTRUE(input$lateral_g_cutoff > 0)) paste0(input$lateral_g_cutoff, " Hz low-pass, applied to the whole lap") else "none",
+          ". Longitudinal acceleration is not filtered."
+        )) |>
         tab_options(
           table.font.names = "Times New Roman",
           table.font.size  = px(16)
