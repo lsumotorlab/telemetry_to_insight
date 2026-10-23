@@ -3,7 +3,7 @@
 # Uses a raw telemetry file that contains the simulator's own lap time for the
 # previous lap (Assetto Corsa: column "lastLap", in ms). The data file is NOT
 # part of the repository; set its path (and optionally the official track
-# length in metres) before running, from the project folder:
+# length in meters) before running, from the project folder:
 #
 #   real_file <- r"(yourfile.csv)"
 #   official_track_length_m <- 1956          # optional
@@ -15,7 +15,7 @@
 #    the v1.0.0 method (lapTime of the last sample).
 # 2) Track length: distance driven per lap = sum of the distances between
 #    consecutive car positions (carCoordinates, m), horizontal (X-Z) and 3D.
-#    The official length is measured along the track centreline, the car
+#    The official length is measured along the track centerline, the car
 #    follows its racing line, so differences of about 1% are expected.
 # Only a per-lap summary is written:
 # validation/validation_real_lap_times_results.csv (no raw data).

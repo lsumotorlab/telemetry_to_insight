@@ -86,7 +86,7 @@ track_mapping_compare <- function() {
   # Categorical attribute config
   # --------------------------------------------------
 
-  # Fixed named palette — same gear always gets the same colour across both lap maps
+  # Fixed named palette — same gear always gets the same color across both lap maps
   gear_palette <- c(
     "0" = "#999999",
     "1" = "#E41A1C",
@@ -111,7 +111,7 @@ track_mapping_compare <- function() {
     "6" = "#A65628"
   )
 
-  # Binary flag palette: 0 = inactive (grey), 1 = active (red)
+  # Binary flag palette: 0 = inactive (gray), 1 = active (red)
   flag_palette <- c("0" = "#CCCCCC", "1" = "#E41A1C")
 
   categorical_attributes <- c("gear", "isAbsInAction", "isTcInAction")
@@ -472,7 +472,7 @@ track_mapping_compare <- function() {
       )
   }
   # --------------------------------------------------
-  # Plot catalogue
+  # Plot catalog
   # --------------------------------------------------
   plot_catalogue <- list(
     "Reference map" = list(

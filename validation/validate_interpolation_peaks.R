@@ -195,7 +195,7 @@ if (exists("real_file") && file.exists(real_file)) {
   raw <- read_csv(real_file, col_select = any_of(cols_b), show_col_types = FALSE, progress = FALSE)
   miss <- setdiff(cols_b, names(raw))
   if (length(miss) > 0) stop("Missing columns in real_file: ", paste(miss, collapse = ", "))
-  # Lateral acceleration is analysed under the toolkit's standard name
+  # Lateral acceleration is analyzed under the toolkit's standard name
   raw <- raw |> rename(accGHorizontal = all_of(real_lateral_col))
   cat("\nPart B: lateral acceleration taken from column", real_lateral_col, "\n")
 

@@ -313,7 +313,7 @@ local({
   laps_all <- laps_all[laps_all > 0]
 
   # Composite reference lap (from create_synthetic_lap.R): available for
-  # analysis and as the reference lap, labelled, and left out of the
+  # analysis and as the reference lap, labeled, and left out of the
   # across-lap consistency statistics
   comp_laps <- if (".synthetic" %in% names(telemetry)) {
     unique(telemetry$lapCount[telemetry$.synthetic %in% TRUE])
@@ -404,7 +404,7 @@ local({
   # ---- traction circle ----
 
   # Optional dashed circle of a user-chosen radius, for visual reference only.
-  # It is not the car's grip limit, which depends on speed, load, tyres and
+  # It is not the car's grip limit, which depends on speed, load, tires and
   # direction and cannot be derived from these data.
   plot_traction_circle <- function(df, ref_radius, axis_lim = NULL) {
     if (!has_cols(df, c("accGHorizontal", "accGFrontal"))) {
@@ -720,9 +720,9 @@ local({
     label_map    <- c(speedKmh = "Speed (km/h)", accGHorizontal = "Lateral G",
                       accGFrontal = "Longitudinal G", gas = "Throttle", brake = "Brake")
     legend_label <- label_map[[color_var]]
-    palette_hint <- if (color_var == "gas") "(grey = low, green = high)"
+    palette_hint <- if (color_var == "gas") "(gray = low, green = high)"
                     else if (color_var == "accGFrontal") "(red = braking, white = 0, green = acceleration)"
-                    else if (color_var == "brake") "(grey = low, red = high)"
+                    else if (color_var == "brake") "(gray = low, red = high)"
                     else if (color_var == "speedKmh") "(red = low, green = high)"
                     else "(blue = left, white = 0, orange = right)"
     plot_title   <- paste0("Corner Map — ", legend_label, " ", palette_hint)
@@ -803,7 +803,7 @@ local({
                      value = NA, min = 0.1, step = 0.1),
         tags$small(style = "color: #666;",
           "Draws a dashed circle on the Traction Circle for visual reference only.",
-          "It is not the car's grip limit, which depends on speed, load, tyres and",
+          "It is not the car's grip limit, which depends on speed, load, tires and",
           "direction and cannot be derived from these data."),
         tags$hr(),
         sliderInput("lateral_g_cutoff",

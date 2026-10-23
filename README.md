@@ -63,7 +63,7 @@ install.packages(c(
 - **Conventions expected by the toolkit:**
   - `lapCount` identifies the lap of each sample.
   - `lapTime` is the time elapsed since the start of the current lap (resets to 0 at each start/finish crossing); milliseconds or seconds (auto-detected).
-  - `carPositionNormalized` is the position along the lap, from 0 at the start/finish line to 1 at the end of the lap (other ranges, e.g. metres, are rescaled automatically).
+  - `carPositionNormalized` is the position along the lap, from 0 at the start/finish line to 1 at the end of the lap (other ranges, e.g. meters, are rescaled automatically).
   - Speed in km/h or m/s, accelerations in G or m/s² (auto-detected, or set manually).
   - Sampling may be irregular and may contain missing values: time-weighted metrics, interpolated timing and the filter handle both (see `telemetry_core.R` and the validation scripts).
 - **Axis labels:** some loggers label the acceleration axes differently from their physical meaning (e.g., lateral acceleration stored as `accGVertical`). Step 1 checks which column follows steering × speed² and warns if the mapped lateral column does not.
@@ -135,7 +135,7 @@ source("telemetry_harmonizer_and_preprocessing.R")   # launches the app
 > **Note:** The meaning of X, Y, and Z axes is not consistent across telemetry sources.
             In Assetto Corsa, X and Z represent the 2D track plane (horizontal position) and Y represents elevation.
             Other simulators or telemetry systems may assign these axes differently.
-            Verify the axis convention for your specific data source before interpreting coordinate-based visualisations.
+            Verify the axis convention for your specific data source before interpreting coordinate-based visualizations.
 
 | `speedKmh` | Speed (km/h) |
 | `engineRPM` | Engine RPM |
@@ -154,7 +154,7 @@ source("telemetry_harmonizer_and_preprocessing.R")   # launches the app
 - **Input speed unit** — choose km/h, m/s, or Auto-detect. Auto-detect assumes km/h when the 99th percentile exceeds 120 or the median exceeds 50 (implausible in m/s); otherwise m/s, multiplied by 3.6.
 - **Input lap time unit** — choose Milliseconds, Seconds, or Auto-detect. Auto-detect assumes seconds when the median lap time is ≤ 1000 (since no real racing lap takes more than 1000 seconds) and converts by multiplying by 1000. Use the manual options if your data is ambiguous.
 - **Input acceleration unit** — choose how `accGHorizontal` and `accGFrontal` are stored in your source file. Options: Auto-detect, G forces, m/s². Auto-detect assumes m/s² when the 99th percentile of absolute values exceeds 10 (since 10 G is physically impossible, but 10 m/s² ≈ 1 G is normal). m/s² values are divided by 9.81 to convert to G.
-- **Track position** — rescaled to 0–1 by dividing by its maximum when the maximum exceeds 1.1 (e.g., metres or %).
+- **Track position** — rescaled to 0–1 by dividing by its maximum when the maximum exceeds 1.1 (e.g., meters or %).
 - **Units used** (tab 2, after *Apply harmonization*) — a table showing, for each variable, the unit setting, the input statistic that auto-detect used, the rule, and the result. If a result is wrong, select the unit manually and apply harmonization again.
 - **Lateral-acceleration check** (tab 2) — correlates each acceleration column with steering × speed²; lateral acceleration should follow it closely. A warning names a better-fitting column if the logger labels the axes differently.
 - **Data quality per lap** (tab 3) — sampling rate, median/maximum interval, long gaps, missing time stamps, % missing values per channel, minimum speed, backward movement, a check of the track-position channel, and flags (e.g., pit samples, car stopped, moves backwards). Downloadable as CSV.
@@ -219,7 +219,7 @@ source("create_synthetic_lap.R")   # launches the app
 - Click **Download updated CSV** to save the dataset with the composite reference lap appended.
 - The composite lap receives the next available lap number (max lap + 1).
 
-> The downloaded CSV from this step is the recommended input for Steps 3–5 and Corner Analysis when you want to include the composite reference lap. It is labelled in all apps and excluded from summary and consistency statistics.
+> The downloaded CSV from this step is the recommended input for Steps 3–5 and Corner Analysis when you want to include the composite reference lap. It is labeled in all apps and excluded from summary and consistency statistics.
 
 ---
 
@@ -244,7 +244,7 @@ source("telemetry_lap_level_summary_interactive.R")   # launches the app
 | Braking threshold | % brake above which a sample counts as "braking" |
 | Lateral G low-pass cutoff | Cutoff (Hz, default 5; 0 = no filter) used for "Max Lateral G (filtered)". "Max Lateral G (raw)" is always unfiltered. There is no single correct cutoff: report the value used (shown in the table subtitle). |
 | Choose laps | Checkboxes to include/exclude individual laps |
-| Designate the composite reference lap | Mark the composite reference lap (pre-selected if the file marks it) — it is excluded from summary statistics and lap trends but shown, labelled, in the lap table |
+| Designate the composite reference lap | Mark the composite reference lap (pre-selected if the file marks it) — it is excluded from summary statistics and lap trends but shown, labeled, in the lap table |
 
 ### Tabs
 
@@ -265,7 +265,7 @@ source("telemetry_lap_level_summary_interactive.R")   # launches the app
 source("track_mapping_interactive.R")   # launches the app
 ```
 
-**Purpose:** Visualises telemetry channels overlaid on the track map for a single lap. Up to 4 plots can be displayed simultaneously.
+**Purpose:** Visualizes telemetry channels overlaid on the track map for a single lap. Up to 4 plots can be displayed simultaneously.
 
 ### Sidebar controls
 
@@ -287,17 +287,17 @@ source("track_mapping_interactive.R")   # launches the app
 | Plot | What is shown |
 |------|--------------|
 | Track outline | Plain track layout |
-| Speed map | Track coloured by speed (red–yellow–green gradient) |
-| Gear map | Track coloured by gear engaged |
-| Braking zones | Points where brake input exceeds threshold, coloured by brake pressure |
-| Full throttle zones | Points at full throttle, coloured by speed |
-| Brake/Throttle Overlap | Points where brake and throttle are simultaneously active, coloured by flag |
+| Speed map | Track colored by speed (red–yellow–green gradient) |
+| Gear map | Track colored by gear engaged |
+| Braking zones | Points where brake input exceeds threshold, colored by brake pressure |
+| Full throttle zones | Points at full throttle, colored by speed |
+| Brake/Throttle Overlap | Points where brake and throttle are simultaneously active, colored by flag |
 | ABS activation points | Locations where ABS was triggered |
 | TC activation points | Locations where traction control was triggered |
 | Elevation profile | Elevation vs. distance along the lap |
-| Track with elevation color | Track map coloured by elevation (cividis palette) |
-| Lateral G map | Track coloured by lateral acceleration (`accGHorizontal`). Blue = left cornering, red = right cornering. Supports low-pass filtering. |
-| Longitudinal G map | Track coloured by longitudinal acceleration (`accGFrontal`). Green = accelerating, red = braking. |
+| Track with elevation color | Track map colored by elevation (cividis palette) |
+| Lateral G map | Track colored by lateral acceleration (`accGHorizontal`). Blue = left cornering, red = right cornering. Supports low-pass filtering. |
+| Longitudinal G map | Track colored by longitudinal acceleration (`accGFrontal`). Green = accelerating, red = braking. |
 | Lateral G over time | Lateral acceleration (`accGHorizontal`) plotted as a time series over lap time. Blue = left, red = right. Supports low-pass filtering. |
 | Steer over time | Steering input (`steer`) plotted as a time series over lap time. Blue = left, red = right. |
 
@@ -332,9 +332,9 @@ source("track_mapping_compare_interactive.R")   # launches the app
 
 | Panel | Description |
 |-------|-------------|
-| **Reference map** | Track map coloured by the selected attribute for the reference lap |
-| **Comparison map** | Track map coloured by the selected attribute for the comparison lap |
-| **Delta map** | Track map coloured by the difference (comparison − reference). Green/red = faster/slower for speed; blue/red for other attributes |
+| **Reference map** | Track map colored by the selected attribute for the reference lap |
+| **Comparison map** | Track map colored by the selected attribute for the comparison lap |
+| **Delta map** | Track map colored by the difference (comparison − reference). Green/red = faster/slower for speed; blue/red for other attributes |
 | **Attribute trace** | Line chart of both laps over normalized lap position (0–100%) |
 
 Lap times for both selected laps are displayed above the plots in `M:SS.ss` format.
@@ -356,7 +356,7 @@ source("corner_analysis_interactive.R")   # launches the app
 
 **Window 1 — Upload & Setup**
 
-1. Upload the harmonized/filtered CSV from Step 1 (or Step 2 if you want the composite reference lap included; it is labelled and excluded from consistency statistics).
+1. Upload the harmonized/filtered CSV from Step 1 (or Step 2 if you want the composite reference lap included; it is labeled and excluded from consistency statistics).
 2. Optionally flip coordinates horizontally (X) or vertically (Z) to orient the track correctly.
 3. Select a **reference lap** — its track outline is used for corner selection in Window 2.
 4. Click **Continue to corner selection**.
@@ -382,8 +382,8 @@ The main analysis app. The sidebar lets you adjust the pre/post buffer, select l
 | Select laps | Toggle individual laps on/off; Select all / Deselect all buttons |
 | Reference lap | Lap used as the baseline for Speed Delta and Time Delta plots |
 | Show hover data | Enable interactive tooltips on all plots |
-| Corner map measure | Channel used to colour the Corner Map (Speed, Lateral G, Longitudinal G, Throttle, Brake) |
-| Reference circle radius (G) | Optional dashed circle on the Traction Circle, for visual reference only (blank = hidden, the default). It is not the car's grip limit, which depends on speed, load, tyres and direction and cannot be derived from the telemetry. |
+| Corner map measure | Channel used to color the Corner Map (Speed, Lateral G, Longitudinal G, Throttle, Brake) |
+| Reference circle radius (G) | Optional dashed circle on the Traction Circle, for visual reference only (blank = hidden, the default). It is not the car's grip limit, which depends on speed, load, tires and direction and cannot be derived from the telemetry. |
 | Lateral G low-pass cutoff (Hz) | Optional filter for lateral acceleration (0 = no filter), applied to the whole lap before the corner is cut out. Affects the Traction Circle, Corner Map (Lateral G) and "Max Lateral G (filtered)"; "Max Lateral G (raw)" is always unfiltered. Longitudinal acceleration is not filtered. |
 
 #### Analysis tabs
@@ -396,7 +396,7 @@ The main analysis app. The sidebar lets you adjust the pre/post buffer, select l
 | **Corner Summary** | `gt` table — corner time (s), entry speed, min speed, average speed, exit speed, max lateral G (raw and filtered), max braking and acceleration G per lap; a note states the filter used; sorted by fastest corner time; reference lap highlighted. **Export CSV** button saves the displayed table. |
 | **Speed Delta** | Speed difference (km/h), lap minus reference lap, over normalized position; positive = higher speed |
 | **Time Delta** | Cumulative time difference (s), lap minus reference lap, starting from 0 at the left edge of the plot; positive = slower (time lost), as in the Segment Time Delta Map |
-| **Corner Map** | XZ coordinate scatter coloured by the selected measure, one panel per lap |
+| **Corner Map** | XZ coordinate scatter colored by the selected measure, one panel per lap |
 | **Consistency** | CV% statistics table (mean, SD, CV%, min, max for each metric) plus a lap-by-lap trend chart with mean reference lines. **Export CSV** button saves the statistics table. |
 
 ### Required columns

@@ -68,7 +68,7 @@ lap_times <- function(lap_data) {
 # Missing data rule (one rule for all metrics): each metric uses only the
 # samples where its channel has a value, and the time weights are computed
 # from those samples. A missing value is therefore bridged by its valid
-# neighbours, each covering half of the gap - exactly like a dropped sample.
+# neighbors, each covering half of the gap - exactly like a dropped sample.
 # Rows without lapTime are left out; if a lap has no usable lapTime at all,
 # its samples are weighted equally. A channel missing for the whole lap gives NA.
 .weighting_times <- function(t, n) {
@@ -169,7 +169,7 @@ sampling_rate_hz <- function(t) {
 # irregular sampling and missing values:
 #   1. samples with a value and a time stamp, in time order
 #   2. linear interpolation onto an even time grid at the mean sampling rate
-#      (missing values and dropped samples bridged by their neighbours)
+#      (missing values and dropped samples bridged by their neighbors)
 #   3. lowpass_filter() on the even grid
 #   4. filtered signal interpolated back to the original time stamps
 # Samples that were NA (or have no time stamp) stay NA. The sampling rate used
@@ -212,7 +212,7 @@ filter_subtitle <- function(cutoff_hz, fs) {
 # =============================================================================
 # Lap summary metrics
 # =============================================================================
-# Per lap (time-weighted, missing data bridged by valid neighbours, see above):
+# Per lap (time-weighted, missing data bridged by valid neighbors, see above):
 #   Lap Time (s)               = interpolated time at which the car returns to the
 #                                lap's own timing line (lap_time_estimate) / 1000
 #   Full Throttle (%)          = pct_w(gas > full_throttle_threshold)
@@ -1234,7 +1234,7 @@ harmonize_telemetry <- function(df, mapping, speed_unit = c("auto", "kmh", "ms")
     }
     add_report("Track position", col_name("carPositionNormalized"), "Automatic",
                sprintf("maximum = %.3f", mx),
-               "divided by its maximum if maximum > 1.1 (e.g., metres or %)",
+               "divided by its maximum if maximum > 1.1 (e.g., meters or %)",
                if (rescale) sprintf("divided by %.3f (0-1)", mx) else "0-1 (unchanged)")
   }
 
