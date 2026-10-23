@@ -366,6 +366,7 @@ source("corner_analysis_interactive.R")   # launches the app
 - An interactive track map of the reference lap is displayed.
 - **Click once** to place the corner **entry** point (snapped to the nearest `carPositionNormalized` value; shown in green).
 - **Click again** to place the corner **exit** point (shown in red). The selected section is highlighted in orange.
+- A corner may cross the start/finish line (exit before entry in lap position). The end of each lap is then joined to the start of the same lap, as for sector times in Step 2, and the corner time is [t(lap end) − t(entry)] + [t(exit) − t(lap start)].
 - Use **Reset** to start over, then **Confirm corner** to proceed.
 
 **Window 3 — Analysis**
@@ -393,8 +394,8 @@ The main analysis app. The sidebar lets you adjust the pre/post buffer, select l
 | **Speed Trace** | Speed (km/h) over normalized lap position; green/red dashed lines mark entry/exit |
 | **Throttle & Brake** | Gas and brake inputs faceted into two panels over normalized lap position |
 | **Corner Summary** | `gt` table — corner time (s), entry speed, min speed, average speed, exit speed, max lateral G (raw and filtered), max braking and acceleration G per lap; a note states the filter used; sorted by fastest corner time; reference lap highlighted. **Export CSV** button saves the displayed table. |
-| **Speed Delta** | Speed difference (km/h) vs the reference lap over normalized position; positive = faster |
-| **Time Delta** | Cumulative time gap (s) vs the reference lap; positive = faster |
+| **Speed Delta** | Speed difference (km/h), lap minus reference lap, over normalized position; positive = higher speed |
+| **Time Delta** | Cumulative time difference (s), lap minus reference lap, starting from 0 at the left edge of the plot; positive = slower (time lost), as in the Segment Time Delta Map |
 | **Corner Map** | XZ coordinate scatter coloured by the selected measure, one panel per lap |
 | **Consistency** | CV% statistics table (mean, SD, CV%, min, max for each metric) plus a lap-by-lap trend chart with mean reference lines. **Export CSV** button saves the statistics table. |
 

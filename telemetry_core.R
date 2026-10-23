@@ -321,6 +321,15 @@ get_summary_stats <- function(lap_stats_table, synthetic_lap = NA) {
 # Position-time: interpolated boundary crossings
 # =============================================================================
 
+# Positions of one lap in time order, unwrapped across the start/finish line
+# (jumps of more than half a lap removed)
+.unwrap_positions <- function(p) {
+  jump <- c(0, diff(p))
+  u <- p + cumsum(jump < -0.5) - cumsum(jump > 0.5)
+  if (length(u) > 0 && u[1] > 0.5) u <- u - 1  # lap starts just before the line
+  u
+}
+
 # Order one lap's samples by time and unwrap normalized position across the
 # start/finish line, so position rises from ~0 to ~1 over the lap.
 # Returns row indices (time order, first sample at each position) and the
@@ -328,11 +337,7 @@ get_summary_stats <- function(lap_stats_table, synthetic_lap = NA) {
 lap_unwrap <- function(pos, t) {
   idx <- which(is.finite(pos) & is.finite(t))
   idx <- idx[order(t[idx])]
-  p <- pos[idx]
-  jump <- c(0, diff(p))
-  u <- p + cumsum(jump < -0.5) - cumsum(jump > 0.5)
-  if (length(u) > 0 && u[1] > 0.5) u <- u - 1  # lap starts just before the line
-  u <- cummax(u)
+  u <- cummax(.unwrap_positions(pos[idx]))
   keep <- !duplicated(u)
   list(idx = idx[keep], u = u[keep])
 }
@@ -511,6 +516,33 @@ compute_seg_times_real <- function(raw_df, bounds) {
 # =============================================================================
 # Corner analysis (corner_analysis_interactive.R)
 # =============================================================================
+# Corner across the start/finish line (entry_pos > exit_pos): the end of the
+# lap is joined to the start of the same lap, as for sector times
+# (seg_duration). Samples between the exit and the entry are split at the
+# midpoint; those before it (the start of the lap) get position u + 1 and time
+# t + [t(1) - t(0)], so the corner runs continuously from entry_pos to
+# exit_pos + 1 and corner time = [t(1) - t(entry)] + [t(exit) - t(0)].
+# Positions are unwrapped as in lap_unwrap(). Other corners are returned unchanged.
+corner_unwrap <- function(lap_df, entry_pos, exit_pos) {
+  if (entry_pos <= exit_pos) return(lap_df)
+  pos <- lap_df$carPositionNormalized
+  t   <- lap_df$lapTime
+  idx <- which(is.finite(pos) & is.finite(t))
+  if (length(idx) < 2) return(lap_df)
+  idx <- idx[order(t[idx])]
+
+  u     <- .unwrap_positions(pos[idx])
+  tt    <- t[idx]
+  shift <- diff(lap_time_at(pos, t, c(0, 1)))
+  start_part <- u < (exit_pos + entry_pos) / 2
+  u[start_part]  <- u[start_part] + 1
+  tt[start_part] <- tt[start_part] + shift
+
+  lap_df$carPositionNormalized[idx] <- u
+  lap_df$lapTime[idx] <- tt
+  lap_df
+}
+
 # Per lap (df grouped by lap_label), corner from entry_pos to exit_pos:
 #   Corner Time (s)    = [t(exit_pos) - t(entry_pos)] / 1000, lapTime linearly
 #                        interpolated at the entry and exit positions
@@ -523,8 +555,18 @@ compute_seg_times_real <- function(raw_df, bounds) {
 #                              over the whole lap by the app; raw if cutoff = 0)
 #   Max Braking G      = max |accGFrontal| of negative values inside the corner
 #   Max Accel. G       = max accGFrontal of positive values inside the corner
+# A corner with entry_pos > exit_pos crosses the start/finish line; positions
+# and times are first made continuous with corner_unwrap().
 corner_summary_table <- function(df, entry_pos, exit_pos) {
   if (!has_cols(df, c("speedKmh", "lapTime", "carPositionNormalized"))) return(NULL)
+
+  if (entry_pos > exit_pos) {
+    df <- df |>
+      dplyr::group_by(lap_label) |>
+      dplyr::group_modify(\(d, k) corner_unwrap(d, entry_pos, exit_pos)) |>
+      dplyr::ungroup()
+    exit_pos <- exit_pos + 1
+  }
 
   lo <- min(entry_pos, exit_pos)
   hi <- max(entry_pos, exit_pos)

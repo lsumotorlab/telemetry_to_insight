@@ -187,7 +187,11 @@ local({
     output$marker_summary <- renderUI({
       tagList(
         tags$p(paste("Entry position:", if (is.null(entry_pos())) "—" else round(entry_pos(), 4))),
-        tags$p(paste("Exit position:",  if (is.null(exit_pos()))  "—" else round(exit_pos(),  4)))
+        tags$p(paste("Exit position:",  if (is.null(exit_pos()))  "—" else round(exit_pos(),  4))),
+        if (!is.null(entry_pos()) && !is.null(exit_pos()) && entry_pos() > exit_pos())
+          tags$p(style = "color: #cc6600;",
+                 "Exit is before entry: the corner crosses the start/finish line (orange section).",
+                 "If this is not intended, click Reset and select entry first, then exit.")
       )
     })
 
@@ -204,8 +208,12 @@ local({
         )
 
       if (!is.null(ep) && !is.null(xp)) {
-        lo <- min(ep, xp); hi <- max(ep, xp)
-        section <- ref_df |> dplyr::filter(.pos >= lo & .pos <= hi)
+        section <- if (ep <= xp) {
+          ref_df |> dplyr::filter(.pos >= ep & .pos <= xp)
+        } else {
+          # crosses the start/finish line: entry -> line -> exit
+          ref_df |> dplyr::filter(.pos >= ep | .pos <= xp) |> dplyr::arrange(.pos < ep, .pos)
+        }
         if (nrow(section) > 0) {
           p <- p |> add_trace(
             data = section, x = ~.x, y = ~.z,
@@ -294,6 +302,13 @@ local({
   BF <- "Times New Roman"
   BS <- 18
 
+  # A corner with entry > exit crosses the start/finish line. Its data are made
+  # continuous with corner_unwrap() (telemetry_core.R), so it runs from
+  # entry_pos to exit_c = exit_pos + 1; axes show positions modulo 1.
+  crosses_line <- entry_pos > exit_pos
+  exit_c       <- if (crosses_line) exit_pos + 1 else exit_pos
+  pos_labels   <- function(x) percent(x %% 1, accuracy = 0.1)
+
   laps_all <- sort(unique(telemetry$lapCount))
   laps_all <- laps_all[laps_all > 0]
 
@@ -340,15 +355,20 @@ local({
                  accGHorizontal = as.numeric(lowpass_lap(accGHorizontal, lapTime, cutoff_hz)))
       }
 
+      lap_df <- corner_unwrap(lap_df, entry_pos, exit_pos) |>
+        filter(is.finite(lapTime)) |>
+        arrange(carPositionNormalized)
+      if (nrow(lap_df) < 2) return(tibble())
+
       entry_idx <- which.min(abs(lap_df$carPositionNormalized - entry_pos))
-      exit_idx  <- which.min(abs(lap_df$carPositionNormalized - exit_pos))
+      exit_idx  <- which.min(abs(lap_df$carPositionNormalized - exit_c))
       entry_t   <- lap_df$lapTime[entry_idx]
       exit_t    <- lap_df$lapTime[exit_idx]
 
       if (!is.finite(entry_t) || !is.finite(exit_t) || entry_t >= exit_t) {
         filtered <- lap_df |>
-          filter(carPositionNormalized >= min(entry_pos, exit_pos),
-                 carPositionNormalized <= max(entry_pos, exit_pos))
+          filter(carPositionNormalized >= min(entry_pos, exit_c),
+                 carPositionNormalized <= max(entry_pos, exit_c))
       } else {
         filtered <- lap_df |>
           filter(lapTime >= entry_t - pre_sec * 1000,
@@ -432,8 +452,8 @@ local({
     ggplot(df, aes(x = carPositionNormalized, y = speedKmh, color = lap_label)) +
       geom_line(linewidth = 0.9, alpha = 0.85) +
       geom_vline(xintercept = entry_pos, linetype = "dashed", color = "green4", linewidth = 0.7) +
-      geom_vline(xintercept = exit_pos,  linetype = "dashed", color = "red3",   linewidth = 0.7) +
-      scale_x_continuous(labels = percent_format(accuracy = 0.1)) +
+      geom_vline(xintercept = exit_c, linetype = "dashed", color = "red3",   linewidth = 0.7) +
+      scale_x_continuous(labels = pos_labels) +
       labs(
         title = "Speed Through Corner",
         x     = "Normalized lap position",
@@ -460,8 +480,8 @@ local({
       ggplot(df, aes(x = carPositionNormalized, y = .data[[col]], color = lap_label)) +
         geom_line(linewidth = 0.8, alpha = 0.85) +
         geom_vline(xintercept = entry_pos, linetype = "dashed", color = "green4", linewidth = 0.7) +
-        geom_vline(xintercept = exit_pos,  linetype = "dashed", color = "red3",   linewidth = 0.7) +
-        scale_x_continuous(labels = percent_format(accuracy = 0.1)) +
+        geom_vline(xintercept = exit_c, linetype = "dashed", color = "red3",   linewidth = 0.7) +
+        scale_x_continuous(labels = pos_labels) +
         scale_y_continuous(labels = percent_format(accuracy = 1)) +
         labs(x = "Normalized lap position", y = panel_title, color = NULL) +
         theme_classic(base_family = BF, base_size = BS) +
@@ -495,7 +515,7 @@ local({
   # ---- summary table ----
 
   # Calculation in telemetry_core.R (corner_summary_table)
-  make_summary_table <- function(df) corner_summary_table(df, entry_pos, exit_pos)
+  make_summary_table <- function(df) corner_summary_table(df, entry_pos, exit_c)
 
   # ---- speed delta ----
 
@@ -539,11 +559,11 @@ local({
       geom_hline(yintercept = 0, linetype = "dashed", color = "grey40", linewidth = 0.7) +
       geom_line(linewidth = 0.9, alpha = 0.85) +
       geom_vline(xintercept = entry_pos, linetype = "dashed", color = "green4", linewidth = 0.7) +
-      geom_vline(xintercept = exit_pos,  linetype = "dashed", color = "red3",   linewidth = 0.7) +
-      scale_x_continuous(labels = percent_format(accuracy = 0.1)) +
+      geom_vline(xintercept = exit_c, linetype = "dashed", color = "red3",   linewidth = 0.7) +
+      scale_x_continuous(labels = pos_labels) +
       labs(
         title    = paste("Speed Delta vs", ref_label),
-        subtitle = "Positive = faster than reference",
+        subtitle = "Positive = higher speed than reference",
         x        = "Normalized lap position",
         y        = "Speed delta (km/h)",
         color    = NULL
@@ -583,7 +603,7 @@ local({
     delta_df <- purrr::map_dfr(other_labels, function(lbl) {
       other_df   <- df |> filter(lap_label == lbl)
       other_time <- interp_numeric(other_df$carPositionNormalized, other_df$lapTime, grid)
-      raw_delta  <- (ref_time - other_time) / 1000
+      raw_delta  <- (other_time - ref_time) / 1000  # comparison - reference
       tibble(
         carPositionNormalized = grid,
         delta_s               = raw_delta - raw_delta[1],
@@ -595,11 +615,11 @@ local({
       geom_hline(yintercept = 0, linetype = "dashed", color = "grey40", linewidth = 0.7) +
       geom_line(linewidth = 0.9, alpha = 0.85) +
       geom_vline(xintercept = entry_pos, linetype = "dashed", color = "green4", linewidth = 0.7) +
-      geom_vline(xintercept = exit_pos,  linetype = "dashed", color = "red3",   linewidth = 0.7) +
-      scale_x_continuous(labels = percent_format(accuracy = 0.1)) +
+      geom_vline(xintercept = exit_c, linetype = "dashed", color = "red3",   linewidth = 0.7) +
+      scale_x_continuous(labels = pos_labels) +
       labs(
         title    = paste("Cumulative Time Delta vs", ref_label),
-        subtitle = "Positive = faster than reference",
+        subtitle = "Positive = slower than reference (time lost)",
         x        = "Normalized lap position",
         y        = "Time delta (s)",
         color    = NULL
@@ -747,6 +767,7 @@ local({
     sidebarLayout(
       sidebarPanel(
         tags$b(sprintf("Corner: pos %.4f → %.4f", entry_pos, exit_pos)),
+        if (crosses_line) tags$p("Crosses the start/finish line: the end of each lap is joined to its start, as for sector times."),
         tags$hr(),
         sliderInput("pre_buf",  "Seconds before entry (plots only)",
                     min = 0, max = 10, value = 1, step = 0.5),

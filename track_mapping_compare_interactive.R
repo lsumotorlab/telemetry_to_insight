@@ -461,7 +461,7 @@ track_mapping_compare <- function() {
       coord_fixed() +
       labs(
         title = "Segment Time Delta Map",
-        subtitle = paste0(cmp_label, "  −  ", ref_label, "  [negative = comparison faster]"),
+        subtitle = paste0(cmp_label, "  −  ", ref_label, "  [positive = comparison slower]"),
         x = "X Position",
         y = "Z Position"
       ) +
