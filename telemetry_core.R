@@ -1115,10 +1115,11 @@ check_lateral_channel <- function(df, mapping, min_r = 0.5, margin = 0.2) {
   }
 }
 
-harmonize_telemetry <- function(df, mapping, speed_unit = c("auto", "kmh", "ms"), lap_time_unit = c("auto", "milliseconds", "seconds"), acc_unit = c("auto", "g", "ms2")) {
+harmonize_telemetry <- function(df, mapping, speed_unit = c("auto", "kmh", "ms"), lap_time_unit = c("auto", "milliseconds", "seconds"), acc_unit = c("auto", "g", "ms2"), pedal_unit = c("auto", "fraction", "percent")) {
   speed_unit    <- match.arg(speed_unit)
   lap_time_unit <- match.arg(lap_time_unit)
   acc_unit      <- match.arg(acc_unit)
+  pedal_unit    <- match.arg(pedal_unit)
   n <- nrow(df)
   out_list <- setNames(vector("list", length(required_fields)), required_fields)
   
@@ -1257,6 +1258,33 @@ harmonize_telemetry <- function(df, mapping, speed_unit = c("auto", "kmh", "ms")
                  sprintf("99th percentile of |value| = %.2f", q99),
                  "m/s² if 99th percentile of |value| > 10, else G",
                  if (do_convert) "m/s² -> divided by 9.81 (G)" else "G (unchanged)")
+    }
+  }
+
+  for (pedal_col in c("gas", "brake")) {
+    if (!all(is.na(out_list[[pedal_col]]))) {
+      pvals <- out_list[[pedal_col]]
+      # auto: pedal inputs start at 0 (released); the maximum over the whole file
+      # shows the scale. A 0-1 input cannot exceed 1, while a 0-100 input exceeds
+      # 1.5 in any real session (full throttle, firm braking). Above 105 the
+      # scale is unknown (e.g., raw sensor counts, brake pressure): not changed,
+      # flagged in the report for the user to convert.
+      mx <- suppressWarnings(max(pvals, na.rm = TRUE))
+      unknown <- is.finite(mx) && mx > 105
+      do_convert <- !unknown && (if (pedal_unit == "percent") {
+        TRUE
+      } else if (pedal_unit == "fraction") {
+        FALSE
+      } else {
+        is.finite(mx) && mx > 1.5
+      })
+      if (do_convert) out_list[[pedal_col]] <- out_list[[pedal_col]] / 100
+      add_report(field_labels[[pedal_col]], col_name(pedal_col),
+                 c(auto = "Auto-detect", fraction = "0-1", percent = "0-100 (%)")[[pedal_unit]],
+                 sprintf("maximum = %.2f", mx),
+                 "0-100 if maximum > 1.5, else 0-1; unknown scale if maximum > 105",
+                 if (unknown) "WARNING: unknown scale (maximum > 105), not changed. Convert to 0-1 before loading."
+                 else if (do_convert) "0-100 -> divided by 100 (0-1)" else "0-1 (unchanged)")
     }
   }
 

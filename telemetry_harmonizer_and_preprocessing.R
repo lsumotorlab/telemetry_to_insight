@@ -81,6 +81,13 @@ run_telemetry_harmonize_and_preprocess_app <- function() {
           selected = "auto",
           inline = TRUE
         ),
+        radioButtons(
+          "pedal_unit",
+          "Input gas/brake scale",
+          choices = c("Auto-detect" = "auto", "0-1" = "fraction", "0-100 (%)" = "percent"),
+          selected = "auto",
+          inline = TRUE
+        ),
         actionButton("apply_harmonize", "Apply harmonization"),
         
         hr(),
@@ -251,7 +258,8 @@ run_telemetry_harmonize_and_preprocess_app <- function() {
         mapping = mapv,
         speed_unit = input$speed_unit,
         lap_time_unit = input$lap_time_unit,
-        acc_unit = input$acc_unit
+        acc_unit = input$acc_unit,
+        pedal_unit = input$pedal_unit
       )
       units_report(attr(out, "units_report"))
       out <- select_analysis_columns(out)
@@ -270,11 +278,18 @@ run_telemetry_harmonize_and_preprocess_app <- function() {
       }
       h <- harmonized()
       missing_all_na <- names(h)[vapply(h, function(col) all(is.na(col)), logical(1))]
-      if (length(missing_all_na)) {
+      status <- if (length(missing_all_na)) {
         paste0("Harmonized. Warning: these fields are all NA: ", paste(missing_all_na, collapse = ", "))
       } else {
         "Harmonized. All required fields present (not all values necessarily non missing)."
       }
+      rep <- units_report()
+      unit_warn <- if (!is.null(rep)) rep$Variable[startsWith(rep$Result, "WARNING")] else character(0)
+      if (length(unit_warn)) {
+        status <- paste0(status, "\nWarning: unknown scale for ", paste(unit_warn, collapse = ", "),
+                         " (see Units used).")
+      }
+      status
     })
     
     output$harm_preview <- renderTable({

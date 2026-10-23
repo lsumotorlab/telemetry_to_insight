@@ -64,7 +64,7 @@ install.packages(c(
   - `lapCount` identifies the lap of each sample.
   - `lapTime` is the time elapsed since the start of the current lap (resets to 0 at each start/finish crossing); milliseconds or seconds (auto-detected).
   - `carPositionNormalized` is the position along the lap, from 0 at the start/finish line to 1 at the end of the lap (other ranges, e.g. meters, are rescaled automatically).
-  - Speed in km/h or m/s, accelerations in G or m/s² (auto-detected, or set manually).
+  - Speed in km/h or m/s, accelerations in G or m/s², gas/brake 0–1 or 0–100 (auto-detected, or set manually).
   - Sampling may be irregular and may contain missing values: time-weighted metrics, interpolated timing and the filter handle both (see `telemetry_core.R` and the validation scripts).
 - **Axis labels:** some loggers label the acceleration axes differently from their physical meaning (e.g., lateral acceleration stored as `accGVertical`). Step 1 checks which column follows steering × speed² and warns if the mapped lateral column does not.
 
@@ -140,8 +140,8 @@ source("telemetry_harmonizer_and_preprocessing.R")   # launches the app
 | `speedKmh` | Speed (km/h) |
 | `engineRPM` | Engine RPM |
 | `gear` | Current gear |
-| `gas` | Throttle input 0–1 |
-| `brake` | Brake input 0–1 |
+| `gas` | Throttle pedal input 0–1 (0–100 inputs rescaled, see below) |
+| `brake` | Brake pedal input 0–1 (0–100 inputs rescaled, see below); pedal position, not brake pressure |
 | `steer` | Steering input |
 | `isAbsInAction` | ABS active (0/1) |
 | `isTcInAction` | TC active (0/1) |
@@ -154,6 +154,7 @@ source("telemetry_harmonizer_and_preprocessing.R")   # launches the app
 - **Input speed unit** — choose km/h, m/s, or Auto-detect. Auto-detect assumes km/h when the 99th percentile exceeds 120 or the median exceeds 50 (implausible in m/s); otherwise m/s, multiplied by 3.6.
 - **Input lap time unit** — choose Milliseconds, Seconds, or Auto-detect. Auto-detect assumes seconds when the median lap time is ≤ 1000 (since no real racing lap takes more than 1000 seconds) and converts by multiplying by 1000. Use the manual options if your data is ambiguous.
 - **Input acceleration unit** — choose how `accGHorizontal` and `accGFrontal` are stored in your source file. Options: Auto-detect, G forces, m/s². Auto-detect assumes m/s² when the 99th percentile of absolute values exceeds 10 (since 10 G is physically impossible, but 10 m/s² ≈ 1 G is normal). m/s² values are divided by 9.81 to convert to G.
+- **Input gas/brake scale** — choose 0–1, 0–100 (%), or Auto-detect. Pedal inputs start at 0 (released), so the maximum over the whole file shows the scale: Auto-detect assumes 0–100 when the maximum exceeds 1.5 (a 0–1 input cannot exceed 1, and full throttle or firm braking exceeds 1.5 on a 0–100 scale) and divides by 100. If the maximum exceeds 105, the scale is unknown (e.g., raw sensor counts or brake pressure): the values are not changed and a warning is shown; convert the column to 0–1 before loading.
 - **Track position** — rescaled to 0–1 by dividing by its maximum when the maximum exceeds 1.1 (e.g., meters or %).
 - **Units used** (tab 2, after *Apply harmonization*) — a table showing, for each variable, the unit setting, the input statistic that auto-detect used, the rule, and the result. If a result is wrong, select the unit manually and apply harmonization again.
 - **Lateral-acceleration check** (tab 2) — correlates each acceleration column with steering × speed²; lateral acceleration should follow it closely. A warning names a better-fitting column if the logger labels the axes differently.
@@ -446,6 +447,8 @@ All validation material is in the `validation/` folder. Run each check from the 
 | `validate_interpolation_peaks.R` | How linear interpolation (lap comparison grid, composite lap) affects peak and minimum values | synthetic laps with known peaks; optional real session | interpolation never exceeds recorded extremes; attenuation reported |
 | `validate_filter.R` | Low-pass filter with uniform, alternating, irregular and missing-value sampling | synthetic signals | 18/18 checks |
 | `validate_position_check.R` | Track-position check: exact position, start offset at the timing line, distorted position, incomplete lap, missing coordinates | synthetic circular laps | all checks pass |
+| `validate_corner_wrap.R` | Corner metrics for a corner that crosses the start/finish line (and one that does not), against exact values; corner time equals sector time | synthetic lap with a known speed profile | 17/17 checks |
+| `validate_units.R` | Unit detection in the harmonizer: speed, lap time, accelerations, track position, gas/brake (0–1, 0–100, unknown 0–255 scale flagged) | synthetic lap | all checks pass |
 | `validate_real_lap_times.R` | Lap times against the simulator's official lap times, and distance per lap against the official track length | a real session file (not included; set `real_file`) | per-lap summary |
 | `check_acceleration_axes.R` | Which acceleration column holds lateral acceleration (correlation with steering × speed², and a plot of steering and the acceleration columns for one lap) | a real session file (not included; set `real_file`) | printed correlations and plot |
 
@@ -457,6 +460,8 @@ source("validation/validate_composite_lap.R")
 source("validation/validate_filter.R")
 source("validation/validate_position_check.R")
 source("validation/validate_interpolation_peaks.R")
+source("validation/validate_corner_wrap.R")
+source("validation/validate_units.R")
 
 # Real-data checks need a raw session file with an official lap-time column (not included):
 real_file <- "C:/path/to/telemetry.csv"
