@@ -7,19 +7,23 @@ library(readr)
 filter <- dplyr::filter
 options(shiny.maxRequestSize = 500 * 1024^2)
 
+# Shared calculation functions (telemetry_core.R, same folder as this script):
+# guess_mapping(), harmonize_telemetry(), apply_preprocess_filters(), ...
+local({
+  script_dir <- tryCatch(dirname(sys.frame(1)$ofile), error = function(e) NULL)
+  candidates <- c(file.path(script_dir, "telemetry_core.R"), "telemetry_core.R")
+  core <- candidates[file.exists(candidates)][1]
+  if (is.na(core)) {
+    stop("telemetry_core.R not found. Keep all toolkit files in one folder and open ",
+         "telemetry_to_insight.Rproj (or setwd() to that folder) before running this script.",
+         call. = FALSE)
+  }
+  source(core)
+})
+
 # =============================================================================
 # Helpers
 # =============================================================================
-as_syn_laps <- function(x) {
-  if (is.null(x)) return(character(0))
-  if (length(x) == 0) return(character(0))
-  x <- x[!is.na(x)]
-  if (length(x) == 0) return(character(0))
-  x <- as.character(x)
-  x <- x[x != ""]
-  unique(x)
-}
-
 parse_int_list <- function(x) {
   if (is.null(x)) return(integer(0))
   x <- trimws(x)
@@ -29,357 +33,6 @@ parse_int_list <- function(x) {
   out <- suppressWarnings(as.integer(parts))
   out <- out[!is.na(out)]
   unique(out)
-}
-
-# =============================================================================
-# Harmonizer
-# =============================================================================
-required_fields <- c(
-  "carCoordinatesX", "carCoordinatesY", "carCoordinatesZ",
-  "lapCount", "lapTime", "carPositionNormalized",
-  "speedKmh", "gear", "brake", "gas",
-  "engineRPM", "steer",
-  "isAbsInAction", "isTcInAction", "isInPit",
-  "accGHorizontal", "accGFrontal"
-)
-
-field_labels <- c(
-  carCoordinatesX        = "Car coordinates X - Lateral",
-  carCoordinatesY        = "Car coordinates Y - Altitude",
-  carCoordinatesZ        = "Car coordinates Z - Longitudinal",
-  lapCount               = "Lap count",
-  lapTime                = "Lap time",
-  carPositionNormalized  = "Track position (normalized)",
-  speedKmh               = "Speed",
-  gear                   = "Gear",
-  brake                  = "Brake",
-  gas                    = "Gas / Throttle",
-  engineRPM              = "Engine RPM",
-  steer                  = "Steering",
-  isAbsInAction          = "ABS active",
-  isTcInAction           = "Traction control active",
-  isInPit                = "In pit",
-  accGHorizontal         = "Lateral acceleration",
-  accGFrontal            = "Longitudinal acceleration"
-)
-
-guess_mapping <- function(names_in) {
-  norm <- function(x) tolower(gsub("[^a-z0-9]", "", x))
-  names_norm <- norm(names_in)
-  
-  syn <- list(
-    carCoordinatesX = c("^x$", "xpos", "carcoordinatesx", "coordx", "xcoordinate", "autocoordinatesx", "autocoordsx"),
-    carCoordinatesY = c("^y$", "ypos", "carcoordinatesy", "coordy", "ycoordinate", "elev", "autocoordinatesy", "autocoordsy"),
-    carCoordinatesZ = c("^z$", "zpos", "carcoordinatesz", "coordz", "zcoordinate", "long", "lon", "autocoordinatesz", "autocoordsz"),
-    
-    lapCount = c("lap", "lapcount", "lap_number", "lapno", "lapidx", "lapindex"),
-    lapTime = c("laptime", "lap_time", "lapduration", "laptimesec", "laptimes", "timeperlap"),
-    carPositionNormalized = c("carpositionnormalized", "positionnormalized", "posnorm", "trackpos", "trackposition", "splinepos", "splineposition"),
-    
-    speedKmh = c("speed", "speed_kmh", "speedkmh", "kmh", "kph", "speedkph", "speedms", "mps", "velocity"),
-    gear = c("^gear$", "gearbox", "g", "currentgear"),
-    
-    brake = c("brake", "brakepressure", "brake_pct", "brakeperc", "braking", "brakeinput"),
-    gas = c("gas", "throttle", "accel", "throttle_pct", "gas_pedal", "accelerator"),
-    
-    engineRPM = c("enginerpm", "^rpm$", "engine_speed", "enginespeed", "revs", "rev", "motor_rpm", "motorrpm"),
-    steer = c("steer", "steering", "steerangle", "steeringangle", "wheelangle", "steeringwheel", "steerinput", "steeringinput"),
-    
-    isAbsInAction = c("abs", "isabs", "absinaction", "abs_active", "absenabled", "isabsenabled", "absactive"),
-    isTcInAction = c("tc", "istc", "tcinaction", "tc_active", "tcenabled", "tractioncontrol", "tcactive"),
-    
-    isInPit = c("isinpit", "inpit", "pit", "pitlane", "inpitlane", "pitstatus", "pit_flag", "pitflag", "inpits"),
-
-    accGHorizontal = c("accghorizontal", "lateralg", "lateral_g", "acclateral", "glateral", "acchorizontal", "lateralaccel"),
-    accGFrontal    = c("accgfrontal", "longitudinalg", "longitudinal_g", "accfrontal", "gfrontal", "acclongitudinal", "longitudinalaccel")
-  )
-  
-  pick_one <- function(patterns, target_norm) {
-    idx_exact_target <- which(names_norm == target_norm)
-    if (length(idx_exact_target)) return(names_in[idx_exact_target[1]])
-    
-    patterns_norm <- unique(norm(gsub("^\\^|\\$$", "", patterns)))
-    idx_exact_syn <- which(names_norm %in% patterns_norm[nzchar(patterns_norm)])
-    if (length(idx_exact_syn)) return(names_in[idx_exact_syn[1]])
-    
-    for (p in patterns) {
-      idx <- which(grepl(p, names_norm, perl = TRUE))
-      if (length(idx)) return(names_in[idx[1]])
-    }
-    
-    idx_sub <- which(vapply(
-      names_norm,
-      function(n) nzchar(n) && (grepl(target_norm, n, fixed = TRUE) || grepl(n, target_norm, fixed = TRUE)),
-      logical(1)
-    ))
-    if (length(idx_sub)) return(names_in[idx_sub[1]])
-    
-    d <- as.numeric(adist(target_norm, names_norm, partial = TRUE))
-    best <- which.min(d)
-    thresh <- max(2, ceiling(nchar(target_norm) * 0.25))
-    if (length(best) && d[best] <= thresh) return(names_in[best])
-    
-    NA_character_
-  }
-  
-  res <- setNames(rep(NA_character_, length(required_fields)), required_fields)
-  for (t in required_fields) {
-    if (t %in% names_in) {
-      res[t] <- t
-    } else {
-      res[t] <- pick_one(syn[[t]], norm(t))
-    }
-  }
-  res
-}
-
-harmonize_telemetry <- function(df, mapping, speed_unit = c("auto", "kmh", "ms"), lap_time_unit = c("auto", "milliseconds", "seconds"), acc_unit = c("auto", "g", "ms2")) {
-  speed_unit    <- match.arg(speed_unit)
-  lap_time_unit <- match.arg(lap_time_unit)
-  acc_unit      <- match.arg(acc_unit)
-  n <- nrow(df)
-  out_list <- setNames(vector("list", length(required_fields)), required_fields)
-  
-  for (f in required_fields) {
-    sel <- mapping[[f]]
-    
-    if (is.null(sel) || sel == "<none>" || is.na(sel) || !nzchar(sel)) {
-      out_list[[f]] <- rep(NA, n)
-      next
-    }
-    if (!sel %in% names(df)) {
-      out_list[[f]] <- rep(NA, n)
-      next
-    }
-    
-    col <- df[[sel]]
-    
-    if (f %in% c(
-      "carCoordinatesX", "carCoordinatesY", "carCoordinatesZ",
-      "speedKmh", "brake", "gas", "carPositionNormalized",
-      "engineRPM", "steer", "lapTime",
-      "accGHorizontal", "accGFrontal"
-    )) {
-      out_list[[f]] <- suppressWarnings(as.numeric(col))
-      
-    } else if (f %in% c("lapCount", "gear")) {
-      out_list[[f]] <- suppressWarnings(as.integer(as.numeric(col)))
-      
-    } else if (f %in% c("isAbsInAction", "isTcInAction", "isInPit")) {
-      
-      if (is.logical(col)) {
-        out_list[[f]] <- as.integer(col)
-      } else {
-        numeric_col <- suppressWarnings(as.numeric(col))
-        if (sum(!is.na(numeric_col)) >= max(1, floor(0.8 * length(numeric_col)))) {
-          out_list[[f]] <- as.integer(ifelse(is.na(numeric_col), NA, numeric_col > 0))
-        } else {
-          txt <- tolower(trimws(as.character(col)))
-          out_list[[f]] <- as.integer(ifelse(
-            txt %in% c("true", "t", "yes", "y", "1", "on", "in", "pit", "pitlane"),
-            1,
-            ifelse(txt %in% c("false", "f", "no", "n", "0", "off", "out"), 0, NA)
-          ))
-        }
-      }
-      
-    } else {
-      out_list[[f]] <- col
-    }
-    
-    if (length(out_list[[f]]) == 1 && n > 1) out_list[[f]] <- rep(out_list[[f]], n)
-  }
-  
-  if (!all(is.na(out_list[["speedKmh"]]))) {
-    svals <- out_list[["speedKmh"]]
-    do_convert <- if (speed_unit == "ms") {
-      TRUE
-    } else if (speed_unit == "kmh") {
-      FALSE
-    } else {
-      # auto: use improved heuristics based on physical limits
-      # 120 m/s = 432 km/h (impossible for any race car) -> must already be km/h
-      # median > 50 m/s = 180 km/h average (unrealistic for m/s dataset) -> km/h
-      q99  <- quantile(svals, 0.99, na.rm = TRUE)
-      med  <- median(svals, na.rm = TRUE)
-      is_kmh <- (is.finite(q99) && q99 > 120) || (is.finite(med) && med > 50)
-      !is_kmh
-    }
-    if (do_convert) out_list[["speedKmh"]] <- out_list[["speedKmh"]] * 3.6
-  }
-  
-  if (!all(is.na(out_list[["lapTime"]]))) {
-    lvals <- out_list[["lapTime"]]
-    do_convert <- if (lap_time_unit == "seconds") {
-      TRUE
-    } else if (lap_time_unit == "milliseconds") {
-      FALSE
-    } else {
-      # auto: no real racing lap exceeds 1000 seconds; if median <= 1000 values are in seconds
-      med <- median(lvals, na.rm = TRUE)
-      is.finite(med) && med <= 1000
-    }
-    if (do_convert) out_list[["lapTime"]] <- out_list[["lapTime"]] * 1000
-  }
-  
-  if (!all(is.na(out_list[["carPositionNormalized"]]))) {
-    mx <- suppressWarnings(max(out_list[["carPositionNormalized"]], na.rm = TRUE))
-    if (is.finite(mx) && mx > 1.1) {
-      out_list[["carPositionNormalized"]] <- out_list[["carPositionNormalized"]] / mx
-    }
-  }
-
-  for (acc_col in c("accGHorizontal", "accGFrontal")) {
-    if (!all(is.na(out_list[[acc_col]]))) {
-      avals <- out_list[[acc_col]]
-      do_convert <- if (acc_unit == "ms2") {
-        TRUE
-      } else if (acc_unit == "g") {
-        FALSE
-      } else {
-        # auto: if 99th percentile of absolute values > 10, values are almost certainly m/s²
-        # (10G is physically impossible for a race car; 10 m/s² ≈ 1G is normal)
-        q99 <- quantile(abs(avals), 0.99, na.rm = TRUE)
-        is.finite(q99) && q99 > 10
-      }
-      if (do_convert) out_list[[acc_col]] <- out_list[[acc_col]] / 9.81
-    }
-  }
-  
-  tibble::as_tibble(out_list)
-}
-
-# =============================================================================
-# Preprocessing
-# =============================================================================
-select_analysis_columns <- function(telemetry) {
-  telemetry |>
-    select(any_of(c(
-      "time", "lapCount", "lapTime",
-      "carPositionNormalized", "carCoordinatesX", "carCoordinatesY", "carCoordinatesZ",
-      "speedKmh", "speedMs", "engineRPM", "gear",
-      "gas", "brake", "steer",
-      "isAbsInAction", "isTcInAction", "isInPit",
-      "accGHorizontal", "accGFrontal"
-    )))
-}
-
-lap_overview_tbl <- function(telemetry) {
-  if (!("lapCount" %in% names(telemetry))) return(tibble(lapCount = integer(0)))
-  
-  has_pit <- "isInPit" %in% names(telemetry)
-  safe_max <- function(x) {
-    x <- x[!is.na(x)]
-    if (length(x) == 0) NA_real_ else max(x)
-  }
-  
-  telemetry |>
-    group_by(lapCount) |>
-    summarise(
-      rows = n(),
-      pit_rows = if (has_pit) sum(isInPit == 1, na.rm = TRUE) else NA_integer_,
-      lap_time_ms = if ("lapTime" %in% names(telemetry)) safe_max(lapTime) else NA_real_,
-      lap_time_sec = if ("lapTime" %in% names(telemetry)) safe_max(lapTime) / 1000 else NA_real_,
-      .groups = "drop"
-    ) |>
-    mutate(
-      lap_time_formatted = if_else(
-        is.finite(lap_time_sec),
-        sprintf("%d:%05.2f", floor(lap_time_sec / 60), lap_time_sec %% 60),
-        NA_character_
-      )
-    ) |>
-    arrange(lapCount)
-}
-
-apply_preprocess_filters <- function(
-    telemetry,
-    lap_offset = 1L,
-    remove_laps_with_pit = TRUE,
-    laps_to_exclude = integer(0),
-    max_lap_time_seconds = NULL,
-    min_start_speed_kmh = 100,
-    min_overall_speed_kmh = 10
-) {
-  out <- telemetry
-  
-  if ("lapCount" %in% names(out) && !("originalLapCount" %in% names(out))) {
-    out <- out |> mutate(originalLapCount = lapCount)
-  }
-  
-  if (!is.null(laps_to_exclude) && length(laps_to_exclude) > 0 && "originalLapCount" %in% names(out)) {
-    out <- out |> filter(!originalLapCount %in% laps_to_exclude)
-  }
-  
-  if ("lapCount" %in% names(out) && !is.null(lap_offset) && is.finite(lap_offset)) {
-    out <- out |> mutate(lapCount = as.integer(lapCount) + as.integer(lap_offset))
-  }
-  
-  if (remove_laps_with_pit && "isInPit" %in% names(out) && "lapCount" %in% names(out)) {
-    pit_laps <- out |>
-      filter(isInPit == 1) |>
-      pull(lapCount) |>
-      unique()
-    
-    if (length(pit_laps) > 0) out <- out |> filter(!lapCount %in% pit_laps)
-  }
-  
-  if (!is.null(max_lap_time_seconds) && is.finite(max_lap_time_seconds) &&
-      "lapCount" %in% names(out) && "lapTime" %in% names(out)) {
-    
-    slow_laps <- out |>
-      group_by(lapCount) |>
-      summarise(
-        lap_time_sec = {
-          vals <- lapTime[!is.na(lapTime)]
-          if (length(vals) == 0) NA_real_ else max(vals) / 1000
-        },
-        .groups = "drop"
-      ) |>
-      filter(is.finite(lap_time_sec) & lap_time_sec > max_lap_time_seconds) |>
-      pull(lapCount)
-    
-    if (length(slow_laps) > 0) out <- out |> filter(!lapCount %in% slow_laps)
-  }
-  
-  
-  if (!is.null(min_start_speed_kmh) && is.finite(min_start_speed_kmh) &&
-      "lapCount" %in% names(out) && "speedKmh" %in% names(out)) {
-    
-    bad_start_laps <- out |>
-      group_by(lapCount) |>
-      summarise(
-        start_speed_kmh = {
-          vals <- speedKmh[!is.na(speedKmh)]
-          if (length(vals) == 0) NA_real_ else vals[1]
-        },
-        .groups = "drop"
-      ) |>
-      filter(is.finite(start_speed_kmh) & start_speed_kmh < min_start_speed_kmh) |>
-      pull(lapCount)
-    
-    if (length(bad_start_laps) > 0) out <- out |> filter(!lapCount %in% bad_start_laps)
-  }
-  
-  if (!is.null(min_overall_speed_kmh) && is.finite(min_overall_speed_kmh) &&
-      "lapCount" %in% names(out) && "speedKmh" %in% names(out)) {
-    
-    bad_min_speed_laps <- out |>
-      group_by(lapCount) |>
-      summarise(
-        min_speed_kmh = {
-          vals <- speedKmh[!is.na(speedKmh)]
-          if (length(vals) == 0) NA_real_ else min(vals)
-        },
-        .groups = "drop"
-      ) |>
-      filter(is.finite(min_speed_kmh) & min_speed_kmh < min_overall_speed_kmh) |>
-      pull(lapCount)
-    
-    if (length(bad_min_speed_laps) > 0) out <- out |> filter(!lapCount %in% bad_min_speed_laps)
-  }
-  
-  out
 }
 
 # default minimal set used as initial checkbox selection
@@ -428,6 +81,13 @@ run_telemetry_harmonize_and_preprocess_app <- function() {
           selected = "auto",
           inline = TRUE
         ),
+        radioButtons(
+          "pedal_unit",
+          "Input gas/brake scale",
+          choices = c("Auto-detect" = "auto", "0-1" = "fraction", "0-100 (%)" = "percent"),
+          selected = "auto",
+          inline = TRUE
+        ),
         actionButton("apply_harmonize", "Apply harmonization"),
         
         hr(),
@@ -471,11 +131,32 @@ run_telemetry_harmonize_and_preprocess_app <- function() {
             "2 Harmonize Mapping",
             uiOutput("mapping_ui"),
             verbatimTextOutput("mapping_note"),
+            verbatimTextOutput("lateral_check"),
             verbatimTextOutput("harmonize_status"),
+            h4("Units used"),
+            helpText("For each variable: the unit setting, the statistic of the input values used by",
+                     "auto-detect, the rule, and the result. If a result is wrong, choose the unit",
+                     "manually in the sidebar and click Apply harmonization again."),
+            tableOutput("units_report"),
             tableOutput("harm_preview")
           ),
           tabPanel(
             "3 Preprocess",
+            h4("Data quality per lap (harmonized data, before filters)"),
+            helpText(
+              "Sampling rate = samples per second of recorded time. Long gaps = intervals more than",
+              "5 times the median interval. Missing values = % of samples without a value, per channel.",
+              "'Car (nearly) stopped' = minimum speed below 10 km/h; 'moves backwards' = track position",
+              "falls by more than 0.5% of a lap (e.g., a spin). Lap comparison cannot represent these",
+              "periods, so consider excluding such laps. Position coverage = range of track position",
+              "within the lap (flagged below 95%). Position vs distance = largest difference between",
+              "track position and the distance driven (from the car coordinates), as % of a lap",
+              "(flagged above 5%); small differences are expected because position is measured along",
+              "the track's reference line and distance along the driven line."
+            ),
+            tableOutput("lap_quality"),
+            downloadButton("download_quality", "Download data-quality report"),
+            hr(),
             verbatimTextOutput("preprocess_status"),
             h4("Lap overview before"),
             tableOutput("lap_overview_before"),
@@ -553,6 +234,22 @@ run_telemetry_harmonize_and_preprocess_app <- function() {
       )
     })
     
+    # Updates as the mapping changes, so a different column can be tried at once
+    output$lateral_check <- renderText({
+      req(uploaded())
+      m <- mapping_values()
+      req(is.character(m))
+      chk <- check_lateral_channel(uploaded(), as.list(m))
+      if (is.null(chk$table) || nrow(chk$table) == 0) return(chk$message)
+      paste0(
+        chk$message,
+        "\nCorrelation with steering x speed^2 per column: ",
+        paste0(chk$table$column, " ", sprintf("%.2f", chk$table$r), collapse = ", ")
+      )
+    })
+
+    units_report <- reactiveVal(NULL)
+
     harmonized <- eventReactive(input$apply_harmonize, {
       req(uploaded())
       mapv <- mapping_values()
@@ -561,12 +258,19 @@ run_telemetry_harmonize_and_preprocess_app <- function() {
         mapping = mapv,
         speed_unit = input$speed_unit,
         lap_time_unit = input$lap_time_unit,
-        acc_unit = input$acc_unit
-      ) |>
-        select_analysis_columns()
+        acc_unit = input$acc_unit,
+        pedal_unit = input$pedal_unit
+      )
+      units_report(attr(out, "units_report"))
+      out <- select_analysis_columns(out)
       save_output_csv(out, "_harmonized")
       out
     }, ignoreNULL = TRUE)
+
+    output$units_report <- renderTable({
+      req(harmonized())
+      units_report()
+    })
     
     output$harmonize_status <- renderText({
       if (is.null(input$apply_harmonize) || input$apply_harmonize == 0) {
@@ -574,11 +278,18 @@ run_telemetry_harmonize_and_preprocess_app <- function() {
       }
       h <- harmonized()
       missing_all_na <- names(h)[vapply(h, function(col) all(is.na(col)), logical(1))]
-      if (length(missing_all_na)) {
+      status <- if (length(missing_all_na)) {
         paste0("Harmonized. Warning: these fields are all NA: ", paste(missing_all_na, collapse = ", "))
       } else {
         "Harmonized. All required fields present (not all values necessarily non missing)."
       }
+      rep <- units_report()
+      unit_warn <- if (!is.null(rep)) rep$Variable[startsWith(rep$Result, "WARNING")] else character(0)
+      if (length(unit_warn)) {
+        status <- paste0(status, "\nWarning: unknown scale for ", paste(unit_warn, collapse = ", "),
+                         " (see Units used).")
+      }
+      status
     })
     
     output$harm_preview <- renderTable({
@@ -690,6 +401,20 @@ run_telemetry_harmonize_and_preprocess_app <- function() {
       paste(msg, collapse = "\n")
     })
     
+    lap_quality <- reactive({
+      req(harmonized())
+      lap_quality_tbl(harmonized())
+    })
+
+    output$lap_quality <- renderTable({
+      head(lap_quality(), n = 200)
+    }, digits = 1)
+
+    output$download_quality <- downloadHandler(
+      filename = function() paste0(upload_target_stem(), "_data_quality.csv"),
+      content = function(file) write_csv(lap_quality(), file)
+    )
+
     output$lap_overview_before <- renderTable({
       req(harmonized())
       head(lap_overview_tbl(harmonized()), n = 200)

@@ -1,5 +1,18 @@
 options(shiny.maxRequestSize = 500 * 1024^2)
 
+# Shared calculation functions (telemetry_core.R, same folder as this script)
+local({
+  script_dir <- tryCatch(dirname(sys.frame(1)$ofile), error = function(e) NULL)
+  candidates <- c(file.path(script_dir, "telemetry_core.R"), "telemetry_core.R")
+  core <- candidates[file.exists(candidates)][1]
+  if (is.na(core)) {
+    stop("telemetry_core.R not found. Keep all toolkit files in one folder and open ",
+         "telemetry_to_insight.Rproj (or setwd() to that folder) before running this script.",
+         call. = FALSE)
+  }
+  source(core)
+})
+
 track_mapping_compare <- function() {
   
   suppressPackageStartupMessages({
@@ -19,8 +32,11 @@ track_mapping_compare <- function() {
 
   # --------------------------------------------------
   # Helpers
+  # Calculations (has_cols, prepare_lap_for_compare, resample_two_laps,
+  # compute_lap_time_seconds, compute_seg_times_synthetic/real) are in
+  # telemetry_core.R
   # --------------------------------------------------
-  
+
   downsample_for_plot <- function(df, max_points = 12000) {
     if (nrow(df) <= max_points) return(df)
     step <- ceiling(nrow(df) / max_points)
@@ -46,10 +62,6 @@ track_mapping_compare <- function() {
     plotly::toWebGL(gg)
   }
   
-  has_cols <- function(df, cols) {
-    all(cols %in% names(df))
-  }
-  
   make_error_plot <- function(msg) {
     ggplot() +
       annotate("text", x = 0, y = 0, label = msg, size = 6) +
@@ -61,85 +73,6 @@ track_mapping_compare <- function() {
     if (x %in% names(labels)) labels[[x]] else x
   }
   
-  interp_numeric <- function(x, y, xout) {
-    ok <- is.finite(x) & is.finite(y)
-    x <- x[ok]
-    y <- y[ok]
-    if (length(x) < 2) return(rep(NA_real_, length(xout)))
-    
-    ord <- order(x)
-    x <- x[ord]
-    y <- y[ord]
-    
-    dup <- duplicated(x)
-    x <- x[!dup]
-    y <- y[!dup]
-    
-    if (length(x) < 2) return(rep(NA_real_, length(xout)))
-    
-    approx(x = x, y = y, xout = xout, rule = 2)$y
-  }
-  
-  prepare_lap_for_compare <- function(df) {
-    need <- c("lapCount", "carCoordinatesX", "carCoordinatesZ", "carPositionNormalized")
-    miss <- setdiff(need, names(df))
-    if (length(miss) > 0) {
-      stop(paste("Missing required columns:", paste(miss, collapse = ", ")))
-    }
-    
-    df |>
-      arrange(carPositionNormalized) |>
-      filter(is.finite(carPositionNormalized)) |>
-      distinct(carPositionNormalized, .keep_all = TRUE)
-  }
-  
-  resample_two_laps <- function(ref_df, cmp_df, vars, n_points = 800) {
-    grid <- tibble(carPositionNormalized = seq(0, 1, length.out = n_points))
-    
-    out <- grid
-    
-    for (v in vars) {
-      if (v %in% names(ref_df)) {
-        out[[paste0(v, "_ref")]] <- interp_numeric(
-          ref_df$carPositionNormalized,
-          ref_df[[v]],
-          grid$carPositionNormalized
-        )
-      } else {
-        out[[paste0(v, "_ref")]] <- NA_real_
-      }
-      
-      if (v %in% names(cmp_df)) {
-        out[[paste0(v, "_cmp")]] <- interp_numeric(
-          cmp_df$carPositionNormalized,
-          cmp_df[[v]],
-          grid$carPositionNormalized
-        )
-      } else {
-        out[[paste0(v, "_cmp")]] <- NA_real_
-      }
-      
-      out[[paste0(v, "_delta")]] <- out[[paste0(v, "_cmp")]] - out[[paste0(v, "_ref")]]
-    }
-    
-    out
-  }
-  
-  compute_lap_time_seconds <- function(df) {
-    if (!("lapTime" %in% names(df))) {
-      return(NA_real_)
-    }
-    
-    vals <- df$lapTime
-    vals <- vals[is.finite(vals)]
-    
-    if (length(vals) == 0) {
-      return(NA_real_)
-    }
-    
-    max(vals, na.rm = TRUE) / 1000
-  }
-  
   format_seconds <- function(sec) {
     if (is.na(sec)) return("NA")
     
@@ -149,90 +82,11 @@ track_mapping_compare <- function() {
     sprintf("%d:%05.2f", minutes, seconds)
   }
   
-  in_interval <- function(pos, start, end, include_left = TRUE) {
-    if (start < end) {
-      if (include_left) pos >= start & pos < end else pos > start & pos <= end
-    } else {
-      if (include_left) {
-        (pos >= start & pos < 1) | (pos >= 0 & pos < end)
-      } else {
-        (pos > start & pos <= 1) | (pos >= 0 & pos <= end)
-      }
-    }
-  }
-  
-  compute_seg_times_synthetic <- function(raw_df) {
-    if (!has_cols(raw_df, c("seg", "lapTime", "carPositionNormalized"))) {
-      return(list(times = numeric(0), bounds = NULL))
-    }
-    
-    df <- raw_df |>
-      filter(!is.na(seg), is.finite(lapTime), is.finite(carPositionNormalized)) |>
-      arrange(lapTime)
-    
-    if (nrow(df) == 0) {
-      return(list(times = numeric(0), bounds = NULL))
-    }
-    
-    bounds <- df |>
-      group_by(seg) |>
-      summarise(
-        duration_ms = max(lapTime, na.rm = TRUE) - min(lapTime, na.rm = TRUE),
-        start = dplyr::first(carPositionNormalized),
-        end   = dplyr::last(carPositionNormalized),
-        .groups = "drop"
-      ) |>
-      arrange(seg)
-    
-    times <- tibble::deframe(bounds |>
-                               select(seg, duration_ms))
-    
-    list(times = times, bounds = bounds)
-  }
-  
-  compute_seg_times_real <- function(raw_df, bounds) {
-    if (has_cols(raw_df, c("seg", "lapTime")) && any(!is.na(raw_df$seg))) {
-      out <- raw_df |>
-        filter(!is.na(seg), is.finite(lapTime)) |>
-        group_by(seg) |>
-        summarise(
-          duration_ms = max(lapTime, na.rm = TRUE) - min(lapTime, na.rm = TRUE),
-          .groups = "drop"
-        ) |>
-        arrange(seg)
-      
-      return(setNames(out$duration_ms, out$seg))
-    }
-    
-    if (is.null(bounds) ||
-        !has_cols(raw_df, c("lapTime", "carPositionNormalized")) ||
-        !all(c("seg", "start", "end") %in% names(bounds))) {
-      return(numeric(0))
-    }
-    
-    df <- raw_df |>
-      filter(is.finite(lapTime), is.finite(carPositionNormalized)) |>
-      arrange(lapTime) |>
-      mutate(
-        dt = pmax(0, lapTime - lag(lapTime, default = first(lapTime)))
-      )
-    
-    times <- vapply(seq_len(nrow(bounds)), function(i) {
-      rows <- df |>
-        filter(in_interval(carPositionNormalized, bounds$start[i], bounds$end[i], include_left = TRUE))
-      
-      if (nrow(rows) < 2) return(NA_real_)
-      sum(rows$dt, na.rm = TRUE)
-    }, numeric(1))
-    
-    setNames(times, bounds$seg)
-  }
-  
   # --------------------------------------------------
   # Categorical attribute config
   # --------------------------------------------------
 
-  # Fixed named palette — same gear always gets the same colour across both lap maps
+  # Fixed named palette — same gear always gets the same color across both lap maps
   gear_palette <- c(
     "0" = "#999999",
     "1" = "#E41A1C",
@@ -257,7 +111,7 @@ track_mapping_compare <- function() {
     "6" = "#A65628"
   )
 
-  # Binary flag palette: 0 = inactive (grey), 1 = active (red)
+  # Binary flag palette: 0 = inactive (gray), 1 = active (red)
   flag_palette <- c("0" = "#CCCCCC", "1" = "#E41A1C")
 
   categorical_attributes <- c("gear", "isAbsInAction", "isTcInAction")
@@ -396,7 +250,7 @@ track_mapping_compare <- function() {
   
   plot_attribute_trace <- function(comp_df, attribute, ref_label, cmp_label,
                                    base_family = "Times New Roman", base_size = 18) {
-    ref_label <- sub(" \\| reference.*", "", ref_label)
+    ref_label <- sub(" \\| (composite )?reference.*", "", ref_label)
     cmp_label <- sub(" \\| comparison", "", cmp_label)
     ref_col <- paste0(attribute, "_ref")
     cmp_col <- paste0(attribute, "_cmp")
@@ -498,10 +352,10 @@ track_mapping_compare <- function() {
                                       base_family = "Times New Roman", base_size = 18) {
     need_ref <- c("seg", "carPositionNormalized", "carCoordinatesX", "carCoordinatesZ")
     if (!has_cols(ref_df, need_ref)) {
-      return(make_error_plot("Reference (synthetic) lap missing required columns"))
+      return(make_error_plot("Composite reference lap missing required columns"))
     }
     if (length(seg_times_ref) == 0) {
-      return(make_error_plot("No segment times found in reference (synthetic) lap"))
+      return(make_error_plot("No segment times found in composite reference lap"))
     }
     
     segs <- names(seg_times_ref)
@@ -537,14 +391,19 @@ track_mapping_compare <- function() {
              is.finite(lapTime),
              is.finite(carCoordinatesX),
              is.finite(carCoordinatesZ)) |>
-      mutate(seg = as.character(seg)) |>
+      mutate(
+        seg = as.character(seg),
+        # order each segment from its start boundary (keeps a segment that
+        # crosses the start/finish line in one piece)
+        .ord = if ("start" %in% names(ref_df)) (carPositionNormalized - start) %% 1 else lapTime
+      ) |>
       semi_join(
         seg_df |>
           mutate(seg = as.character(seg)) |>
           select(seg),
         by = "seg"
       ) |>
-      arrange(seg, lapTime) |>
+      arrange(seg, .ord) |>
       group_by(seg) |>
       summarise(
         start_x = dplyr::first(carCoordinatesX),
@@ -602,7 +461,7 @@ track_mapping_compare <- function() {
       coord_fixed() +
       labs(
         title = "Segment Time Delta Map",
-        subtitle = paste0(cmp_label, "  −  ", ref_label, "  [negative = comparison faster]"),
+        subtitle = paste0(cmp_label, "  −  ", ref_label, "  [positive = comparison slower]"),
         x = "X Position",
         y = "Z Position"
       ) +
@@ -613,7 +472,7 @@ track_mapping_compare <- function() {
       )
   }
   # --------------------------------------------------
-  # Plot catalogue
+  # Plot catalog
   # --------------------------------------------------
   plot_catalogue <- list(
     "Reference map" = list(
@@ -670,7 +529,7 @@ track_mapping_compare <- function() {
           choices = c("Lap A", "Lap B"),
           selected = "Lap A"
         ),
-        checkboxInput("reference_is_synthetic", "Reference lap is synthetic", value = FALSE),
+        checkboxInput("reference_is_synthetic", "Reference lap is the composite reference lap", value = FALSE),
         tags$hr(),
         checkboxInput("flip_horizontal", "Flip horizontal (mirror X)", value = TRUE),
         checkboxInput("flip_vertical", "Flip vertical (mirror Z)", value = FALSE),
@@ -680,7 +539,7 @@ track_mapping_compare <- function() {
           condition = "input.attribute == 'gear'",
           checkboxInput("ac_gear_remap", "Set gear encoding (0=R, 1=N, 2–7 = gears 1–6)", value = FALSE)
         ),
-        numericInput("n_interp", "Interpolation points", value = 800, min = 200, max = 3000, step = 100),
+        numericInput("n_interp", "Interpolation points", value = 3000, min = 200, max = 10000, step = 100),
         checkboxInput("show_hover", "Show hover data", value = FALSE),
         tags$hr(),
         helpText(tags$b("Deltas are computed as comparison minus reference on a common normalized lap axis."))
@@ -811,7 +670,7 @@ track_mapping_compare <- function() {
       }
       
       ref_label <- if (isTRUE(input$reference_is_synthetic)) {
-        paste0(ref_base, " | reference | synthetic")
+        paste0(ref_base, " | composite reference")
       } else {
         paste0(ref_base, " | reference")
       }
@@ -925,7 +784,7 @@ track_mapping_compare <- function() {
           if (isTRUE(input$reference_is_synthetic)) "| Segment time delta" else "", "\n")
       cat("Plot downsampling cap:", 12000, "points\n")
       if (isTRUE(input$reference_is_synthetic)) {
-        cat("Synthetic segments available:", length(dat$seg_times_ref), "\n")
+        cat("Composite reference segments available:", length(dat$seg_times_ref), "\n")
         cat("Comparison segment matches:", sum(is.finite(dat$seg_times_cmp)), "\n")
       }
     })

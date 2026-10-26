@@ -1,26 +1,31 @@
-
-# 1) Upload telemetry CSV
-# 2) Select reference lap
-# 3) Select segment boundaries on the track (same click workflow)
-# 4) Build and append a synthetic fastest-segment lap
-# 5) Download the updated dataset
-
-# ----------------------------
-# Core functions 
-# ----------------------------
-
-options(shiny.maxRequestSize = 500 * 1024^2)
-
-##### SyntheticLapInteractive.R
+##### create_synthetic_lap.R - composite reference lap builder
 # Single-file interactive workflow to:
 # 1) Upload telemetry CSV
 # 2) Select reference lap
-# 3) Select segment boundaries on the track (same click workflow)
-# 4) Build and append a synthetic fastest-segment lap
+# 3) Select sector boundaries on the track (click workflow)
+# 4) Build and append a composite reference lap: the fastest observed sector
+#    from any lap, each keeping its source lap's own timing
 # 5) Download the updated dataset
+#
+# The composite lap is marked with .synthetic = TRUE in the output CSV.
+
+options(shiny.maxRequestSize = 500 * 1024^2)
+
+# Shared calculation functions (telemetry_core.R, same folder as this script)
+local({
+  script_dir <- tryCatch(dirname(sys.frame(1)$ofile), error = function(e) NULL)
+  candidates <- c(file.path(script_dir, "telemetry_core.R"), "telemetry_core.R")
+  core <- candidates[file.exists(candidates)][1]
+  if (is.na(core)) {
+    stop("telemetry_core.R not found. Keep all toolkit files in one folder and open ",
+         "telemetry_to_insight.Rproj (or setwd() to that folder) before running this script.",
+         call. = FALSE)
+  }
+  source(core)
+})
 
 # ----------------------------
-# Core functions (kept as-is in spirit)
+# Core functions
 # ----------------------------
 
 choose_bounds_shiny <- function(
@@ -133,369 +138,9 @@ choose_bounds_shiny <- function(
   shinyApp(ui, server) %>% runApp(launch.browser = TRUE)
 }
 
-build_synthetic_lap_from_bounds <- function(
-    telemetry,
-    bounds,
-    lap_col = "lapCount",
-    pos_col = "carPositionNormalized",
-    time_col = "lapTime",
-    include_boundary = "left",
-    min_samples_per_seg = 10
-) {
-  suppressPackageStartupMessages({
-    library(dplyr)
-    library(purrr)
-  })
-  
-  stopifnot(include_boundary %in% c("left", "right"))
-  include_left <- include_boundary == "left"
-  
-  if (!all(c("seg", "start", "end") %in% names(bounds))) {
-    stop("bounds must contain columns: seg, start, end")
-  }
-  
-  in_interval <- function(pos, start, end, include_left = TRUE) {
-    if (start < end) {
-      if (include_left) pos >= start & pos < end else pos > start & pos <= end
-    } else {
-      if (include_left) (pos >= start & pos < 1) | (pos >= 0 & pos < end)
-      else (pos > start & pos <= 1) | (pos >= 0 & pos <= end)
-    }
-  }
-  
-  per_lap <- telemetry %>%
-    filter(.data[[lap_col]] > 0) %>%
-    arrange(.data[[lap_col]], .data[[pos_col]], .data[[time_col]]) %>%
-    group_by(.data[[lap_col]]) %>%
-    mutate(
-      dt = pmax(0, .data[[time_col]] - lag(.data[[time_col]], default = first(.data[[time_col]])))
-    ) %>%
-    ungroup()
-  
-  seg_times <- purrr::map_dfr(seq_len(nrow(bounds)), function(i) {
-    b <- bounds[i, ]
-    per_lap %>%
-      group_by(.data[[lap_col]]) %>%
-      summarise(
-        n_seg = sum(in_interval(.data[[pos_col]], b$start, b$end, include_left), na.rm = TRUE),
-        seg_time = sum(dt[in_interval(.data[[pos_col]], b$start, b$end, include_left)], na.rm = TRUE),
-        .groups = "drop"
-      ) %>%
-      mutate(seg = b$seg, start = b$start, end = b$end)
-  })
-  
-  winners <- seg_times %>%
-    filter(n_seg >= min_samples_per_seg) %>%
-    group_by(seg) %>%
-    slice_min(seg_time, n = 1, with_ties = FALSE) %>%
-    ungroup() %>%
-    arrange(seg)
-  
-  missing_segs <- setdiff(bounds$seg, winners$seg)
-  if (length(missing_segs) > 0) {
-    fallback <- seg_times %>%
-      filter(seg %in% missing_segs) %>%
-      group_by(seg) %>%
-      slice_max(n_seg, n = 1, with_ties = FALSE) %>%
-      ungroup()
-    winners <- bind_rows(winners, fallback) %>% arrange(seg)
-  }
-  
-  stitched <- purrr::map_dfr(seq_len(nrow(bounds)), function(i) {
-    b <- bounds[i, ]
-    wlap <- winners %>% filter(seg == b$seg) %>% pull(.data[[lap_col]])
-    per_lap %>%
-      filter(.data[[lap_col]] == wlap) %>%
-      arrange(.data[[pos_col]], .data[[time_col]]) %>%
-      filter(in_interval(.data[[pos_col]], b$start, b$end, include_left)) %>%
-      mutate(seg = b$seg, source_lap = wlap)
-  }) %>%
-    arrange(seg, .data[[pos_col]], .data[[time_col]])
-  
-  list(
-    synthetic_lap = stitched,
-    segments = winners %>% select(seg, start, end, source_lap = !!rlang::sym(lap_col), seg_time)
-  )
-}
-
-finalize_synthetic_lap <- function(
-    stitched,
-    telemetry_cols = NULL,
-    lap_col = "lapCount",
-    time_col = "lapTime",
-    pos_col = "carPositionNormalized",
-    new_lap = NULL,
-    time_absolute_col = "time",
-    time_offset = NA_real_,
-    keep_provenance = TRUE
-) {
-  suppressPackageStartupMessages({
-    library(dplyr)
-  })
-  
-  if (is.null(telemetry_cols)) telemetry_cols <- names(stitched)
-  
-  if (!pos_col %in% names(stitched)) stop("stitched is missing ", pos_col)
-  if (!time_col %in% names(stitched)) stop("stitched is missing ", time_col)
-  
-  if (is.null(new_lap)) new_lap <- 0L
-  
-  s <- stitched %>%
-    arrange(.data[[pos_col]]) %>%
-    mutate(
-      !!lap_col := as.integer(new_lap)
-    )
-  
-  if (time_absolute_col %in% names(s)) {
-    if (is.finite(time_offset)) {
-      s[[time_absolute_col]] <- time_offset + s[[time_col]]
-    } else {
-      s[[time_absolute_col]] <- NA_real_
-    }
-  }
-  
-  base_keep <- intersect(telemetry_cols, names(s))
-  
-  if (keep_provenance) {
-    prov <- intersect(c("seg", "source_lap", "start", "end", "dt_seg"), names(s))
-    keep <- unique(c(base_keep, prov))
-  } else {
-    keep <- base_keep
-  }
-  
-  s %>%
-    select(all_of(keep)) %>%
-    mutate(.synthetic = TRUE)
-}
-
-unify_from_speed_output <- function(
-    speed_output,
-    telemetry,
-    new_lap = NULL,
-    keep_provenance = TRUE,
-    time_offset = NA_real_
-) {
-  if (is.null(speed_output$synthetic_lap)) stop("speed_output must contain $synthetic_lap")
-  stitched <- speed_output$synthetic_lap
-  
-  if (is.null(new_lap)) {
-    new_lap <- max(telemetry$lapCount, na.rm = TRUE) + 1L
-  }
-  
-  synth <- finalize_synthetic_lap(
-    stitched = stitched,
-    telemetry_cols = names(telemetry),
-    new_lap = new_lap,
-    keep_provenance = keep_provenance,
-    time_offset = time_offset
-  )
-  
-  missing_in_synth <- setdiff(names(telemetry), names(synth))
-  if (length(missing_in_synth) > 0) {
-    synth[missing_in_synth] <- NA
-  }
-  
-  extra_in_synth <- setdiff(names(synth), names(telemetry))
-  telemetry2 <- telemetry
-  if (length(extra_in_synth) > 0) {
-    telemetry2[extra_in_synth] <- NA
-  }
-  
-  telemetry_with_synth <- dplyr::bind_rows(
-    telemetry2,
-    synth %>% dplyr::select(names(telemetry2))
-  )
-  
-  list(
-    synthetic_lap = synth,
-    telemetry_with_synth = telemetry_with_synth
-  )
-}
-
-resample_and_retime_synthetic_lap <- function(
-    stitched,
-    segments,
-    n_bins,
-    discrete_numeric_cols = c("gear", "isAbsInAction", "isTcInAction"),
-    seg_col = "seg",
-    seg_time_col = "seg_time",
-    start_col = "start",
-    end_col = "end",
-    pos_col = "carPositionNormalized",
-    time_col = "lapTime",
-    x_col = "carCoordinatesX",
-    z_col = "carCoordinatesZ",
-    include_boundary = "left",
-    min_step_dist = 1e-6,
-    keep_provenance = TRUE
-) {
-  suppressPackageStartupMessages({
-    library(dplyr)
-    library(purrr)
-    library(tidyr)
-  })
-  
-  if (!seg_col %in% names(stitched)) stop("stitched must contain column ", seg_col)
-  if (!pos_col %in% names(stitched)) stop("stitched must contain column ", pos_col)
-  if (!x_col %in% names(stitched)) stop("stitched must contain column ", x_col)
-  if (!z_col %in% names(stitched)) stop("stitched must contain column ", z_col)
-  
-  need_seg <- c(seg_col, seg_time_col, start_col, end_col)
-  miss_seg <- setdiff(need_seg, names(segments))
-  if (length(miss_seg) > 0) stop("segments is missing: ", paste(miss_seg, collapse = ", "))
-  
-  stopifnot(include_boundary %in% c("left", "right"))
-  
-  seg_tbl <- segments %>%
-    transmute(
-      seg = .data[[seg_col]],
-      seg_time = .data[[seg_time_col]],
-      start = .data[[start_col]],
-      end = .data[[end_col]],
-      source_lap = if ("source_lap" %in% names(segments)) segments[["source_lap"]] else NA_integer_
-    ) %>%
-    arrange(seg)
-  
-  seg_len <- function(start, end) {
-    ifelse(start < end, end - start, (1 - start) + end)
-  }
-  
-  seg_tbl <- seg_tbl %>% mutate(len = seg_len(start, end))
-  
-  if (sum(seg_tbl$len, na.rm = TRUE) <= 0) stop("Bad segment boundaries. Total length is not positive.")
-  
-  alloc_n <- pmax(2L, as.integer(round(n_bins * seg_tbl$len / sum(seg_tbl$len))))
-  delta <- n_bins - sum(alloc_n)
-  if (delta != 0) {
-    idx <- which.max(seg_tbl$len)
-    alloc_n[idx] <- alloc_n[idx] + delta
-    if (alloc_n[idx] < 2) alloc_n[idx] <- 2
-  }
-  seg_tbl$n <- alloc_n
-  
-  numeric_interp <- function(x, y, xout) {
-    stats::approx(x = x, y = y, xout = xout, rule = 2, ties = "ordered")$y
-  }
-  
-  nearest_pick <- function(x, y, xout) {
-    idx <- vapply(xout, function(v) which.min(abs(x - v)), integer(1))
-    y[idx]
-  }
-  
-  resampled <- purrr::map_dfr(seq_len(nrow(seg_tbl)), function(i) {
-    b <- seg_tbl[i, ]
-    
-    seg_rows <- stitched %>% filter(.data[[seg_col]] == b$seg)
-    
-    pos <- seg_rows[[pos_col]]
-    pos_u <- ifelse(pos < b$start, pos + 1, pos)
-    
-    seg_rows <- seg_rows %>%
-      mutate(.pos_u = pos_u) %>%
-      arrange(.pos_u) %>%
-      group_by(.pos_u) %>%
-      slice(1) %>%
-      ungroup()
-    
-    if (b$start < b$end) {
-      grid_u <- seq(b$start, b$end, length.out = b$n)
-    } else {
-      grid_u <- seq(b$start, b$end + 1, length.out = b$n)
-    }
-    
-    grid_pos <- grid_u %% 1
-    local_u <- grid_u - b$start
-    
-    cols <- names(seg_rows)
-    
-    base <- tibble::tibble(
-      !!seg_col := b$seg,
-      .u_local = local_u,
-      !!pos_col := grid_pos
-    )
-    
-    base$source_lap <- if ("source_lap" %in% names(seg_rows)) seg_rows$source_lap[1] else b$source_lap
-    
-    cols_interp <- setdiff(cols, c(seg_col, pos_col))
-    
-    for (cn in cols_interp) {
-      y <- seg_rows[[cn]]
-      
-      # Treat discrete numeric signals (like gear or ABS or TC flags) as categorical:
-      # pick nearest sample rather than linear interpolation, then coerce back.
-      if (cn %in% discrete_numeric_cols) {
-        y_out <- nearest_pick(seg_rows$.pos_u, y, grid_u)
-        if (is.numeric(y_out)) y_out <- as.integer(round(y_out))
-        if (is.factor(y)) y_out <- factor(as.character(y_out), levels = levels(y))
-        base[[cn]] <- y_out
-      } else if (is.numeric(y)) {
-        base[[cn]] <- numeric_interp(seg_rows$.pos_u, y, grid_u)
-      } else {
-        base[[cn]] <- nearest_pick(seg_rows$.pos_u, y, grid_u)
-      }
-    }
-    
-    base
-  })
-  
-  seg_tbl2 <- seg_tbl %>%
-    arrange(seg) %>%
-    mutate(
-      len = ifelse(start < end, end - start, (1 - start) + end),
-      u_offset = lag(cumsum(len), default = 0),
-      u_total = sum(len)
-    )
-  
-  resampled <- resampled %>%
-    left_join(seg_tbl2 %>% select(seg, u_offset, len, u_total), by = setNames("seg", seg_col)) %>%
-    mutate(
-      .u_global = u_offset + pmin(.u_local, len),
-      !!pos_col := .u_global / u_total
-    ) %>%
-    arrange(.u_global) %>%
-    select(-.u_local, -u_offset, -len, -u_total)
-  
-  resampled <- resampled %>%
-    left_join(seg_tbl %>% select(seg = seg, seg_time), by = setNames("seg", seg_col))
-  
-  if (any(is.na(resampled$seg_time))) stop("Resampled rows have missing seg_time. Segment ids do not match.")
-  
-  resampled2 <- resampled %>%
-    group_by(.data[[seg_col]]) %>%
-    arrange(.data[[pos_col]], .by_group = TRUE) %>%
-    mutate(
-      .dx = .data[[x_col]] - lag(.data[[x_col]], default = first(.data[[x_col]])),
-      .dz = .data[[z_col]] - lag(.data[[z_col]], default = first(.data[[z_col]])),
-      .step_dist = sqrt(.dx * .dx + .dz * .dz),
-      .step_dist = ifelse(is.finite(.step_dist), .step_dist, 0),
-      .step_dist = pmax(.step_dist, 0),
-      .sum_dist = sum(.step_dist, na.rm = TRUE),
-      .w = ifelse(.sum_dist > min_step_dist, .step_dist / .sum_dist, 1 / dplyr::n()),
-      dt_seg = .w * first(seg_time),
-      lapTime_synth = cumsum(dt_seg) - dt_seg
-    ) %>%
-    ungroup()
-  
-  offsets <- resampled2 %>%
-    group_by(.data[[seg_col]]) %>%
-    summarise(.seg_dur = sum(dt_seg, na.rm = TRUE), .groups = "drop") %>%
-    arrange(.data[[seg_col]]) %>%
-    mutate(.seg_offset = lag(cumsum(.seg_dur), default = 0)) %>%
-    select(!!seg_col := .data[[seg_col]], .seg_offset)
-  
-  out <- resampled2 %>%
-    left_join(offsets, by = seg_col) %>%
-    mutate(
-      !!time_col := lapTime_synth + .seg_offset
-    ) %>%
-    select(-seg_time, -.dx, -.dz, -.step_dist, -.sum_dist, -.w, -lapTime_synth, -.seg_offset)
-  
-  if (!keep_provenance) {
-    out <- out %>% select(-any_of(c("source_lap", "dt_seg")))
-  }
-  
-  out
-}
+# Calculations (sector times, fastest-sector selection, composite lap
+# retiming) are in telemetry_core.R: build_synthetic_lap_from_bounds(),
+# resample_and_retime_synthetic_lap(), unify_from_speed_output()
 
 plot_synth_segments_xy <- function(
     synth,
@@ -524,7 +169,11 @@ plot_synth_segments_xy <- function(
       .lap = factor(.data[[lap_col]])
     )
   
-  if (!is.null(order_col) && order_col %in% names(df)) {
+  if (all(c("start", "carPositionNormalized") %in% names(df))) {
+    # Order each sector from its start boundary; keeps a sector that crosses
+    # the start/finish line in one piece
+    df <- df %>% arrange(.seg, (carPositionNormalized - start) %% 1, carPositionNormalized)
+  } else if (!is.null(order_col) && order_col %in% names(df)) {
     df <- df %>% arrange(.data[[order_col]])
   } else {
     if ("carPositionNormalized" %in% names(df)) {
@@ -545,7 +194,7 @@ plot_synth_segments_xy <- function(
       x = "X (m)",
       y = "Z (m)",
       colour = "Lap used",
-      title = "Track Layout - synthetic lap"
+      title = "Track Layout - composite reference lap"
     ) +
     theme_minimal()
   
@@ -583,7 +232,9 @@ plot_synth_segments_xy <- function(
   })
   
   ui <- fluidPage(
-    tags$h3("Synthetic lap builder"),
+    tags$h3("Composite reference lap builder"),
+    tags$p("Assembles the fastest observed sector from each lap. The result is a reference",
+           "built from recorded sectors, not a lap shown to be drivable as a whole."),
     fileInput("csv", "Upload telemetry CSV", accept = c(".csv")),
     fluidRow(
       column(4, checkboxInput("flip_h", "Flip horizontal (X)", value = TRUE)),
@@ -596,7 +247,7 @@ plot_synth_segments_xy <- function(
     plotlyOutput("lap_preview", height = "320px"),
     tags$hr(),
     fluidRow(
-      column(6, numericInput("n_bins", "Resample bins (points in synthetic lap)", value = NA, min = 200, step = 50)),
+      column(6, numericInput("n_bins", "Resample bins (points in composite lap)", value = NA, min = 200, step = 50)),
       column(6, numericInput("min_samples", "Min samples per segment per lap", value = 10, min = 1, step = 1))
     ),
     tags$hr(),
@@ -703,7 +354,7 @@ plot_synth_segments_xy <- function(
   shinyApp(ui, server) %>% runApp(launch.browser = TRUE)
 }
 
-.preview_download_gadget <- function(telemetry_with_synth, synth_lap_plot, default_name = "telemetry_with_synthetic.csv") {
+.preview_download_gadget <- function(telemetry_with_synth, synth_lap_plot, default_name = "telemetry_with_composite_lap.csv") {
   suppressPackageStartupMessages({
     library(shiny)
     library(ggplot2)
@@ -711,7 +362,7 @@ plot_synth_segments_xy <- function(
   })
   
   ui <- fluidPage(
-    tags$h3("Synthetic lap created"),
+    tags$h3("Composite reference lap created"),
     plotOutput("plot", height = "650px"),
     tags$hr(),
     downloadButton("dl", "Download updated CSV"),
@@ -770,7 +421,7 @@ synthetic_lap_interactive <- function(
     snap_k = sel$snap_k
   )
   
-  # Step 3: build synthetic lap
+  # Step 3: build composite reference lap
   out <- build_synthetic_lap_from_bounds(
     telemetry = telemetry,
     bounds = manual$bounds,
@@ -778,22 +429,14 @@ synthetic_lap_interactive <- function(
     min_samples_per_seg = sel$min_samples
   )
   
+  # Resample on a position grid, keeping each source lap's own timing
+  # (positions are already in the original lap coordinate system)
   out$synthetic_lap <- resample_and_retime_synthetic_lap(
-    stitched = out$synthetic_lap,
+    telemetry = telemetry,
     segments = out$segments,
     n_bins = sel$n_bins,
-    include_boundary = include_boundary,
     keep_provenance = keep_provenance
   )
-  
-  # Shift synthetic normalized position back to the original lap coordinate system
-  origin_pos <- min(manual$bounds$start, na.rm = TRUE)
-  
-  out$synthetic_lap <- out$synthetic_lap %>%
-    mutate(
-      carPositionNormalized = (origin_pos + carPositionNormalized) %% 1
-    ) %>%
-    arrange(carPositionNormalized)
   
   if (is.null(new_lap_id)) {
     new_lap_id <- max(telemetry$lapCount, na.rm = TRUE) + 1L

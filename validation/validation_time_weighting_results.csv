@@ -1,0 +1,58 @@
+part,check,expected,calculated,error,pass
+A uniform,Lap 1 | Full Throttle (%),10,10,0,TRUE
+A uniform,Lap 1 | Braking (%),80,80,0,TRUE
+A uniform,Lap 1 | Brake/Throttle Overlap (%),5,5,0,TRUE
+A uniform,Lap 1 | Avg Speed (km/h),100,100,0,TRUE
+A uniform,Lap 1 | ABS Active (%),10,10,0,TRUE
+A uniform,Lap 1 | TC Active (%),10,10,0,TRUE
+A uniform,Lap 1 | Map: full throttle %,10,10,0,TRUE
+A uniform,Lap 2 | Full Throttle (%),20,20,0,TRUE
+A uniform,Lap 2 | Braking (%),100,100,0,TRUE
+A uniform,Lap 2 | Brake/Throttle Overlap (%),20,20,0,TRUE
+A uniform,Lap 2 | Avg Speed (km/h),130,130,0,TRUE
+A uniform,Lap 2 | ABS Active (%),20,20,0,TRUE
+A uniform,Lap 2 | TC Active (%),20,20,0,TRUE
+A uniform,Lap 2 | Map: full throttle %,20,20,0,TRUE
+A uniform,Lap 3 | Full Throttle (%),30,30,0,TRUE
+A uniform,Lap 3 | Braking (%),80,80,0,TRUE
+A uniform,Lap 3 | Brake/Throttle Overlap (%),25,25,0,TRUE
+A uniform,Lap 3 | Avg Speed (km/h),160,160,0,TRUE
+A uniform,Lap 3 | ABS Active (%),30,30,0,TRUE
+A uniform,Lap 3 | TC Active (%),30,30,0,TRUE
+A uniform,Lap 3 | Map: full throttle %,30,30,0,TRUE
+A uniform,Lap 4 | Full Throttle (%),40,40,0,TRUE
+A uniform,Lap 4 | Braking (%),95,95,0,TRUE
+A uniform,Lap 4 | Brake/Throttle Overlap (%),40,40,0,TRUE
+A uniform,Lap 4 | Avg Speed (km/h),115,115,0,TRUE
+A uniform,Lap 4 | ABS Active (%),40,40,0,TRUE
+A uniform,Lap 4 | TC Active (%),40,40,0,TRUE
+A uniform,Lap 4 | Map: full throttle %,40,40,0,TRUE
+A uniform,Lap 1 | Corner avg speed,97.88888888888889,97.88888888888889,0,TRUE
+A uniform,Lap 2 | Corner avg speed,127.42222222222222,127.42222222222222,0,TRUE
+A uniform,Lap 3 | Corner avg speed,160.51111111111112,160.51111111111112,0,TRUE
+A uniform,Lap 4 | Corner avg speed,117.4888888888889,117.4888888888889,0,TRUE
+B uneven,Lap 1 | Avg Speed (km/h),127.14285714285714,127.14285714285714,0,TRUE
+B uneven,Lap 1 | Full Throttle (%),27.142857142857142,27.142857142857142,0,TRUE
+B uneven,Lap 1 | Braking (%),72.85714285714285,72.85714285714285,0,TRUE
+B uneven,Lap 1 | Brake/Throttle Overlap (%),15.714285714285714,15.714285714285714,0,TRUE
+B uneven,Lap 1 | ABS Active (%),28.57142857142857,28.57142857142857,0,TRUE
+B uneven,Lap 1 | TC Active (%),2.857142857142857,2.857142857142857,0,TRUE
+B uneven,Lap 1 | Lap Time (s),3.5,3.5,0,TRUE
+B uneven,Lap 1 | Max Speed (km/h),200,200,0,TRUE
+B uneven,Lap 1 | Min Speed (km/h),100,100,0,TRUE
+B uneven,Lap 1 | Max Lateral G (raw),1,1,0,TRUE
+B uneven,Lap 1 | Max Accel G,0.5,0.5,0,TRUE
+B uneven,Lap 1 | Max Brake G,-1.2,-1.2,0,TRUE
+B uneven,Lap 2 | Avg Speed (km/h),162.5,162.5,0,TRUE
+B uneven,Lap 2 | Full Throttle (%),62.5,62.5,0,TRUE
+B uneven,Lap 2 | Braking (%),37.5,37.5,0,TRUE
+B uneven,Lap 2 | Brake/Throttle Overlap (%),12.5,12.5,0,TRUE
+B uneven,Lap 2 | ABS Active (%),12.5,12.5,0,TRUE
+B uneven,Lap 2 | TC Active (%),12.5,12.5,0,TRUE
+B uneven,Lap 2 | Lap Time (s),4,4,0,TRUE
+B uneven,Lap 1 | Map: full throttle %,27.142857142857142,27.142857142857142,0,TRUE
+B uneven,Lap 1 | Map: overlap %,15.714285714285714,15.714285714285714,0,TRUE
+B uneven,Lap 1 | Corner avg speed,127.14285714285714,127.14285714285714,0,TRUE
+B uneven,Lap 1 | Corner time (s),3.4,3.4,0,TRUE
+B uneven,Lap 2 | Corner avg speed,162.5,162.5,0,TRUE
+B uneven,Lap 2 | Corner time (s),3.5,3.5,0,TRUE

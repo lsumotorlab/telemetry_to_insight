@@ -1,0 +1,163 @@
+lap,condition,metric,expected,tolerance,basis
+1,clean 10 Hz,Lap Time (s),60,0.0014487989505128276,1 ms + interpolation bound
+1,clean 10 Hz,Avg Speed (km/h),120,0.1,0.1 km/h
+1,clean 10 Hz,Max Speed (km/h),156,0.1,0.1 km/h
+1,clean 10 Hz,Min Speed (km/h),84,0.1,0.1 km/h
+1,clean 10 Hz,Full Throttle (%),72,1.1666666666666667,switch intervals
+1,clean 10 Hz,Braking (%),14.999999999999996,1.1666666666666667,switch intervals
+1,clean 10 Hz,Brake/Throttle Overlap (%),1.0000000000000009,1.6666666666666667,switch intervals
+1,clean 10 Hz,ABS Active (%),2.0000000000000018,0.8333333333333334,switch intervals
+1,clean 10 Hz,TC Active (%),1.0000000000000009,0.8333333333333334,switch intervals
+1,clean 10 Hz,Corner Time (s),10.617527090312867,0.0014487989505128276,1 ms + interpolation bound
+1,clean 10 Hz,Corner Entry Speed (km/h),119.6934538045275,0.1,0.1 km/h
+1,clean 10 Hz,Corner Exit Speed (km/h),87.5904245321012,0.1,0.1 km/h
+1,clean 10 Hz,Corner Min Speed (km/h),87.5904245321012,0.26411941752519213,0.1 km/h (+ boundary interval if minimum at entry/exit)
+1,clean 10 Hz,Corner Avg Speed (km/h),101.71860083930106,0.3385883136879619,boundary intervals
+1,clean 10 Hz,Sector 1 Time (s),18.675056766282875,0.0014487989505128276,1 ms + interpolation bound
+1,clean 10 Hz,Sector 2 Time (s),19.11138129188889,0.0014487989505128276,1 ms + interpolation bound
+1,clean 10 Hz,Sector 3 Time (s),10.489585509876058,0.0014487989505128276,1 ms + interpolation bound
+1,clean 10 Hz,Sector 4 Time (s),11.723976431952174,0.0014487989505128276,1 ms + interpolation bound
+2,clean 60 Hz,Lap Time (s),60.3,0.0010124046144420332,1 ms + interpolation bound
+2,clean 60 Hz,Avg Speed (km/h),119.40298507462687,0.1,0.1 km/h
+2,clean 60 Hz,Max Speed (km/h),155.22388059701493,0.1,0.1 km/h
+2,clean 60 Hz,Min Speed (km/h),83.5820895522388,0.1,0.1 km/h
+2,clean 60 Hz,Full Throttle (%),72,0.19347705914868688,switch intervals
+2,clean 60 Hz,Braking (%),14.999999999999996,0.19347705914869742,switch intervals
+2,clean 60 Hz,Brake/Throttle Overlap (%),1.0000000000000009,0.27639579878384896,switch intervals
+2,clean 60 Hz,ABS Active (%),2.0000000000000018,0.13819789939192173,switch intervals
+2,clean 60 Hz,TC Active (%),1.0000000000000009,0.13819789939191718,switch intervals
+2,clean 60 Hz,Corner Time (s),12.461644457614508,0.001012404614442037,1 ms + interpolation bound
+2,clean 60 Hz,Corner Entry Speed (km/h),95.55585497261951,0.1,0.1 km/h
+2,clean 60 Hz,Corner Exit Speed (km/h),87.24485505928318,0.1,0.1 km/h
+2,clean 60 Hz,Corner Min Speed (km/h),83.58208955329191,0.1,0.1 km/h (+ boundary interval if minimum at entry/exit)
+2,clean 60 Hz,Corner Avg Speed (km/h),86.6659294985809,0.023779433777182876,boundary intervals
+2,clean 60 Hz,Sector 1 Time (s),22.126391809717436,0.0010124046144420363,1 ms + interpolation bound
+2,clean 60 Hz,Sector 2 Time (s),16.221813284123574,0.001012404614442034,1 ms + interpolation bound
+2,clean 60 Hz,Sector 3 Time (s),9.623085125011835,0.0010124046144420315,1 ms + interpolation bound
+2,clean 60 Hz,Sector 4 Time (s),12.328709781147154,0.0010124046144420334,1 ms + interpolation bound
+3,clean 100 Hz,Lap Time (s),60.6,0.0010044435539654736,1 ms + interpolation bound
+3,clean 100 Hz,Avg Speed (km/h),118.8118811881188,0.1,0.1 km/h
+3,clean 100 Hz,Max Speed (km/h),154.45544554455444,0.1,0.1 km/h
+3,clean 100 Hz,Min Speed (km/h),83.16831683168316,0.1,0.1 km/h
+3,clean 100 Hz,Full Throttle (%),72,0.11551155115511551,switch intervals
+3,clean 100 Hz,Braking (%),14.999999999999996,0.11551155115511551,switch intervals
+3,clean 100 Hz,Brake/Throttle Overlap (%),1.0000000000000009,0.16501650165016502,switch intervals
+3,clean 100 Hz,ABS Active (%),2.0000000000000018,0.08250825082508251,switch intervals
+3,clean 100 Hz,TC Active (%),1.0000000000000009,0.08250825082508251,switch intervals
+3,clean 100 Hz,Corner Time (s),11.841624242380899,0.0010044435539654736,1 ms + interpolation bound
+3,clean 100 Hz,Corner Entry Speed (km/h),83.17184593080641,0.1,0.1 km/h
+3,clean 100 Hz,Corner Exit Speed (km/h),106.35255806725175,0.1,0.1 km/h
+3,clean 100 Hz,Corner Min Speed (km/h),83.16831683523553,0.1,0.1 km/h (+ boundary interval if minimum at entry/exit)
+3,clean 100 Hz,Corner Avg Speed (km/h),91.20370465182516,0.02558576949471035,boundary intervals
+3,clean 100 Hz,Sector 1 Time (s),23.62334750115976,0.0010044435539654736,1 ms + interpolation bound
+3,clean 100 Hz,Sector 2 Time (s),13.81489399746029,0.0010044435539654736,1 ms + interpolation bound
+3,clean 100 Hz,Sector 3 Time (s),9.408201849167337,0.0010044435539654736,1 ms + interpolation bound
+3,clean 100 Hz,Sector 4 Time (s),13.753556652212614,0.0010044435539654736,1 ms + interpolation bound
+4,irregular intervals 5-60 ms,Lap Time (s),60.9,0.001046460853865931,1 ms + interpolation bound
+4,irregular intervals 5-60 ms,Avg Speed (km/h),118.22660098522168,0.1,0.1 km/h
+4,irregular intervals 5-60 ms,Max Speed (km/h),153.69458128078819,0.1,0.1 km/h
+4,irregular intervals 5-60 ms,Min Speed (km/h),82.75862068965517,0.1,0.1 km/h
+4,irregular intervals 5-60 ms,Full Throttle (%),72,0.3546775196312295,switch intervals
+4,irregular intervals 5-60 ms,Braking (%),14.999999999999996,0.40716539996512513,switch intervals
+4,irregular intervals 5-60 ms,Brake/Throttle Overlap (%),1.0000000000000009,0.5500875477083043,switch intervals
+4,irregular intervals 5-60 ms,ABS Active (%),2.0000000000000018,0.2638063663907337,switch intervals
+4,irregular intervals 5-60 ms,TC Active (%),1.0000000000000009,0.2963498638407977,switch intervals
+4,irregular intervals 5-60 ms,Corner Time (s),10.024763098613468,0.0010847235794328217,1 ms + interpolation bound
+4,irregular intervals 5-60 ms,Corner Entry Speed (km/h),92.01136398556875,0.1,0.1 km/h
+4,irregular intervals 5-60 ms,Corner Exit Speed (km/h),125.36014631035222,0.1,0.1 km/h
+4,irregular intervals 5-60 ms,Corner Min Speed (km/h),92.01136398556875,0.15870160921560555,0.1 km/h (+ boundary interval if minimum at entry/exit)
+4,irregular intervals 5-60 ms,Corner Avg Speed (km/h),107.73321916698218,0.1423483754436133,boundary intervals
+4,irregular intervals 5-60 ms,Sector 1 Time (s),22.678969721946633,0.0011193323623870453,1 ms + interpolation bound
+4,irregular intervals 5-60 ms,Sector 2 Time (s),12.580881819421105,0.0011095844858513006,1 ms + interpolation bound
+4,irregular intervals 5-60 ms,Sector 3 Time (s),9.65255759764948,0.0011067143147695635,1 ms + interpolation bound
+4,irregular intervals 5-60 ms,Sector 4 Time (s),15.987590860982783,0.001116462191305308,1 ms + interpolation bound
+5,"60 Hz, 2 s of dropped samples",Lap Time (s),61.2,0.001012222193641415,1 ms + interpolation bound
+5,"60 Hz, 2 s of dropped samples",Avg Speed (km/h),117.64705882352942,0.1,0.1 km/h
+5,"60 Hz, 2 s of dropped samples",Max Speed (km/h),152.94117647058826,0.1,0.1 km/h
+5,"60 Hz, 2 s of dropped samples",Min Speed (km/h),82.3529411764706,0.1,0.1 km/h
+5,"60 Hz, 2 s of dropped samples",Full Throttle (%),72,0.1906318082788681,switch intervals
+5,"60 Hz, 2 s of dropped samples",Braking (%),14.999999999999996,0.19063180827886217,switch intervals
+5,"60 Hz, 2 s of dropped samples",Brake/Throttle Overlap (%),1.0000000000000009,0.2723311546840998,switch intervals
+5,"60 Hz, 2 s of dropped samples",ABS Active (%),2.0000000000000018,0.13616557734204052,switch intervals
+5,"60 Hz, 2 s of dropped samples",TC Active (%),1.0000000000000009,0.13616557734203605,switch intervals
+5,"60 Hz, 2 s of dropped samples",Corner Time (s),8.733794126373002,0.001012222193641416,1 ms + interpolation bound
+5,"60 Hz, 2 s of dropped samples",Corner Entry Speed (km/h),108.189830310849,0.1,0.1 km/h
+5,"60 Hz, 2 s of dropped samples",Corner Exit Speed (km/h),138.30893656318187,0.1,0.1 km/h
+5,"60 Hz, 2 s of dropped samples",Corner Min Speed (km/h),108.189830310849,0.15818356914263804,0.1 km/h (+ boundary interval if minimum at entry/exit)
+5,"60 Hz, 2 s of dropped samples",Corner Avg Speed (km/h),123.6575976457675,0.059034165110482296,boundary intervals
+5,"60 Hz, 2 s of dropped samples",Sector 1 Time (s),20.44571824356413,0.001012222193641416,1 ms + interpolation bound
+5,"60 Hz, 2 s of dropped samples",Sector 2 Time (s),12.081504756766957,0.0010122221936414134,1 ms + interpolation bound
+5,"60 Hz, 2 s of dropped samples",Sector 3 Time (s),10.240686887660965,0.0010122221936414134,1 ms + interpolation bound
+5,"60 Hz, 2 s of dropped samples",Sector 4 Time (s),18.432090112007952,0.001012222193641416,1 ms + interpolation bound
+6,"60 Hz, 5% NA in speed/gas/brake",Lap Time (s),61.5,0.0010121625731846276,1 ms + interpolation bound
+6,"60 Hz, 5% NA in speed/gas/brake",Avg Speed (km/h),117.07317073170734,0.1,0.1 km/h
+6,"60 Hz, 5% NA in speed/gas/brake",Max Speed (km/h),152.19512195121953,0.1,0.1 km/h
+6,"60 Hz, 5% NA in speed/gas/brake",Min Speed (km/h),81.95121951219512,0.1,0.1 km/h
+6,"60 Hz, 5% NA in speed/gas/brake",Full Throttle (%),72,0.18970189701896378,switch intervals
+6,"60 Hz, 5% NA in speed/gas/brake",Braking (%),14.999999999999996,0.20325203252030796,switch intervals
+6,"60 Hz, 5% NA in speed/gas/brake",Brake/Throttle Overlap (%),1.0000000000000009,0.3387533875338591,switch intervals
+6,"60 Hz, 5% NA in speed/gas/brake",ABS Active (%),2.0000000000000018,0.13550135501354277,switch intervals
+6,"60 Hz, 5% NA in speed/gas/brake",TC Active (%),1.0000000000000009,0.13550135501353833,switch intervals
+6,"60 Hz, 5% NA in speed/gas/brake",Corner Time (s),8.000903168468897,0.0010121625731846287,1 ms + interpolation bound
+6,"60 Hz, 5% NA in speed/gas/brake",Corner Entry Speed (km/h),122.0915528203271,0.1,0.1 km/h
+6,"60 Hz, 5% NA in speed/gas/brake",Corner Exit Speed (km/h),145.8607292281345,0.1,0.1 km/h
+6,"60 Hz, 5% NA in speed/gas/brake",Corner Min Speed (km/h),122.0915528203271,0.15919063294529828,0.1 km/h (+ boundary interval if minimum at entry/exit)
+6,"60 Hz, 5% NA in speed/gas/brake",Corner Avg Speed (km/h),134.9847607525384,0.05371563543401877,boundary intervals
+6,"60 Hz, 5% NA in speed/gas/brake",Sector 1 Time (s),18.33575535540961,0.0010121625731846272,1 ms + interpolation bound
+6,"60 Hz, 5% NA in speed/gas/brake",Sector 2 Time (s),11.997006688856446,0.0010121625731846313,1 ms + interpolation bound
+6,"60 Hz, 5% NA in speed/gas/brake",Sector 3 Time (s),11.10663214531869,0.0010121625731846313,1 ms + interpolation bound
+6,"60 Hz, 5% NA in speed/gas/brake",Sector 4 Time (s),20.060605810415254,0.0010121625731846272,1 ms + interpolation bound
+7,"60 Hz, 5% NA lapTime",Lap Time (s),61.8,0.0010121035315672265,1 ms + interpolation bound
+7,"60 Hz, 5% NA lapTime",Avg Speed (km/h),116.50485436893203,0.1,0.1 km/h
+7,"60 Hz, 5% NA lapTime",Max Speed (km/h),151.45631067961165,0.1,0.1 km/h
+7,"60 Hz, 5% NA lapTime",Min Speed (km/h),81.55339805825241,0.1,0.1 km/h
+7,"60 Hz, 5% NA lapTime",Full Throttle (%),72,0.18878101402373199,switch intervals
+7,"60 Hz, 5% NA lapTime",Braking (%),14.999999999999996,0.202265372168275,switch intervals
+7,"60 Hz, 5% NA lapTime",Brake/Throttle Overlap (%),1.0000000000000009,0.28317152103559623,switch intervals
+7,"60 Hz, 5% NA lapTime",ABS Active (%),2.0000000000000018,0.13484358144551437,switch intervals
+7,"60 Hz, 5% NA lapTime",TC Active (%),1.0000000000000009,0.13484358144551734,switch intervals
+7,"60 Hz, 5% NA lapTime",Corner Time (s),7.5856100183493,0.0010302588289180727,1 ms + interpolation bound
+7,"60 Hz, 5% NA lapTime",Corner Entry Speed (km/h),132.51779358082132,0.1,0.1 km/h
+7,"60 Hz, 5% NA lapTime",Corner Exit Speed (km/h),149.64155941973513,0.1,0.1 km/h
+7,"60 Hz, 5% NA lapTime",Corner Min Speed (km/h),132.51779358082132,0.20528743910038955,0.1 km/h (+ boundary interval if minimum at entry/exit)
+7,"60 Hz, 5% NA lapTime",Corner Avg Speed (km/h),142.37483833040739,0.0649719978073105,boundary intervals
+7,"60 Hz, 5% NA lapTime",Sector 1 Time (s),16.841144574756385,0.0010121035315672274,1 ms + interpolation bound
+7,"60 Hz, 5% NA lapTime",Sector 2 Time (s),12.17450204542185,0.0010121035315672248,1 ms + interpolation bound
+7,"60 Hz, 5% NA lapTime",Sector 3 Time (s),12.241793789037875,0.0010121035315672248,1 ms + interpolation bound
+7,"60 Hz, 5% NA lapTime",Sector 4 Time (s),20.542559590783895,0.0010121035315672274,1 ms + interpolation bound
+8,"60 Hz, brake channel missing",Lap Time (s),62.1,0.0010120450604002352,1 ms + interpolation bound
+8,"60 Hz, brake channel missing",Avg Speed (km/h),115.94202898550724,0.1,0.1 km/h
+8,"60 Hz, brake channel missing",Max Speed (km/h),150.7246376811594,0.1,0.1 km/h
+8,"60 Hz, brake channel missing",Min Speed (km/h),81.15942028985506,0.1,0.1 km/h
+8,"60 Hz, brake channel missing",Full Throttle (%),72,0.1878690284487308,switch intervals
+8,"60 Hz, brake channel missing",Braking (%),NA,NA,channel missing: expected NA
+8,"60 Hz, brake channel missing",Brake/Throttle Overlap (%),NA,NA,channel missing: expected NA
+8,"60 Hz, brake channel missing",ABS Active (%),2.0000000000000018,0.13419216317766314,switch intervals
+8,"60 Hz, brake channel missing",TC Active (%),1.0000000000000009,0.13419216317766458,switch intervals
+8,"60 Hz, brake channel missing",Corner Time (s),7.350367991813331,0.001012045060400236,1 ms + interpolation bound
+8,"60 Hz, brake channel missing",Corner Entry Speed (km/h),140.30057111676092,0.1,0.1 km/h
+8,"60 Hz, brake channel missing",Corner Exit Speed (km/h),150.67893612767836,0.1,0.1 km/h
+8,"60 Hz, brake channel missing",Corner Min Speed (km/h),140.30057111676092,0.1418697619171256,0.1 km/h (+ boundary interval if minimum at entry/exit)
+8,"60 Hz, brake channel missing",Corner Avg Speed (km/h),146.9314191075711,0.030070367443712616,boundary intervals
+8,"60 Hz, brake channel missing",Sector 1 Time (s),15.826805007435299,0.0010120450604002374,1 ms + interpolation bound
+8,"60 Hz, brake channel missing",Sector 2 Time (s),12.586337464122149,0.001012045060400236,1 ms + interpolation bound
+8,"60 Hz, brake channel missing",Sector 3 Time (s),13.699297823239569,0.0010120450604002335,1 ms + interpolation bound
+8,"60 Hz, brake channel missing",Sector 4 Time (s),19.987559705202983,0.0010120450604002348,1 ms + interpolation bound
+9,irregular 50-150 ms + 2 s dropped + 5% NA,Lap Time (s),62.4,0.0013752161986498503,1 ms + interpolation bound
+9,irregular 50-150 ms + 2 s dropped + 5% NA,Avg Speed (km/h),115.38461538461537,0.1,0.1 km/h
+9,irregular 50-150 ms + 2 s dropped + 5% NA,Max Speed (km/h),150,0.1,0.1 km/h
+9,irregular 50-150 ms + 2 s dropped + 5% NA,Min Speed (km/h),80.76923076923076,0.1,0.1 km/h
+9,irregular 50-150 ms + 2 s dropped + 5% NA,Full Throttle (%),72,1.9301307889504526,switch intervals
+9,irregular 50-150 ms + 2 s dropped + 5% NA,Braking (%),14.999999999999996,1.331545733988512,switch intervals
+9,irregular 50-150 ms + 2 s dropped + 5% NA,Brake/Throttle Overlap (%),1.0000000000000009,2.6735705011583963,switch intervals
+9,irregular 50-150 ms + 2 s dropped + 5% NA,ABS Active (%),2.0000000000000018,0.7324262152952798,switch intervals
+9,irregular 50-150 ms + 2 s dropped + 5% NA,TC Active (%),1.0000000000000009,0.7272607172825911,switch intervals
+9,irregular 50-150 ms + 2 s dropped + 5% NA,Corner Time (s),7.249623753139062,0.10968869274485261,1 ms + interpolation bound
+9,irregular 50-150 ms + 2 s dropped + 5% NA,Corner Entry Speed (km/h),145.9302864479974,0.1,0.1 km/h
+9,irregular 50-150 ms + 2 s dropped + 5% NA,Corner Exit Speed (km/h),149.00631252836692,0.1,0.1 km/h
+9,irregular 50-150 ms + 2 s dropped + 5% NA,Corner Min Speed (km/h),145.9302864479974,0.31060710002784825,0.1 km/h (+ boundary interval if minimum at entry/exit)
+9,irregular 50-150 ms + 2 s dropped + 5% NA,Corner Avg Speed (km/h),148.9732483747676,0.9944287077430167,boundary intervals
+9,irregular 50-150 ms + 2 s dropped + 5% NA,Sector 1 Time (s),15.152280027333846,0.11043230066611681,1 ms + interpolation bound
+9,irregular 50-150 ms + 2 s dropped + 5% NA,Sector 2 Time (s),13.329567128410694,0.1093969216397682,1 ms + interpolation bound
+9,irregular 50-150 ms + 2 s dropped + 5% NA,Sector 3 Time (s),15.448085856517398,0.002591780278699561,1 ms + interpolation bound
+9,irregular 50-150 ms + 2 s dropped + 5% NA,Sector 4 Time (s),18.47006698773806,0.0036271593050481677,1 ms + interpolation bound

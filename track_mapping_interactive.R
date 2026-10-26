@@ -1,5 +1,18 @@
 options(shiny.maxRequestSize = 500 * 1024^2)
 
+# Shared calculation functions (telemetry_core.R, same folder as this script)
+local({
+  script_dir <- tryCatch(dirname(sys.frame(1)$ofile), error = function(e) NULL)
+  candidates <- c(file.path(script_dir, "telemetry_core.R"), "telemetry_core.R")
+  core <- candidates[file.exists(candidates)][1]
+  if (is.na(core)) {
+    stop("telemetry_core.R not found. Keep all toolkit files in one folder and open ",
+         "telemetry_to_insight.Rproj (or setwd() to that folder) before running this script.",
+         call. = FALSE)
+  }
+  source(core)
+})
+
 track_mapping_interactive <- function(
     default_overlap_throttle_threshold = 0.99,
     default_overlap_brake_threshold = 0.01
@@ -18,12 +31,7 @@ track_mapping_interactive <- function(
   })
   filter <- dplyr::filter
   
-  lowpass_filter <- function(x, cutoff_hz, fs) {
-    if (is.na(fs) || fs <= 0 || cutoff_hz <= 0 || cutoff_hz >= fs / 2) return(x)
-    W <- cutoff_hz / (fs / 2)
-    bf <- signal::butter(2, W, type = "low")
-    as.numeric(signal::filtfilt(bf, x))
-  }
+  # lowpass_lap(), filter_subtitle(), lap_pct(), lap_times() and overlap_flag() are in telemetry_core.R
 
   downsample_for_plot <- function(df, max_points = 12000) {
     if (nrow(df) <= max_points) return(df)
@@ -116,9 +124,11 @@ track_mapping_interactive <- function(
   plot_throttle_zones <- function(lap_data, lap_id, throttle_threshold = 0.99, base_family = "Times New Roman", base_size = 18) {
     need <- c("gas", "speedKmh")
     if (!all(need %in% names(lap_data))) stop("Missing columns: gas and speedKmh")
+    # % computed on the full-resolution lap, before downsampling for plotting
+    if ("lapTime" %in% names(lap_data)) lap_data <- lap_data %>% arrange(lapTime)
+    throttle_pct <- lap_pct(lap_data$gas > throttle_threshold, lap_times(lap_data))
     lap_data <- downsample_for_plot(lap_data)
     throttle_zones <- lap_data %>% filter(gas > throttle_threshold)
-    throttle_pct <- if (nrow(lap_data) > 0) (nrow(throttle_zones) / nrow(lap_data)) * 100 else NA_real_
     ggplot(lap_data, aes(x = carCoordinatesX, y = carCoordinatesZ)) +
       geom_path(color = "gray80", linewidth = 0.9) +
       geom_point(data = throttle_zones, aes(color = speedKmh), size = 1.2, alpha = 0.75) +
@@ -126,7 +136,7 @@ track_mapping_interactive <- function(
       coord_fixed() +
       labs(
         title = paste("Full Throttle Zones | Lap", lap_id),
-        subtitle = paste0("Samples above ", throttle_threshold * 100, "% throttle: ", sprintf("%.1f", throttle_pct), "%"),
+        subtitle = paste0("Time above ", throttle_threshold * 100, "% throttle: ", sprintf("%.1f", throttle_pct), "% of lap time"),
         x = "X Position (m)",
         y = "Z Position (m)",
         color = "Speed\n(km/h)"
@@ -138,11 +148,12 @@ track_mapping_interactive <- function(
   plot_overlap_zones <- function(lap_data, lap_id, throttle_threshold = 0.99, brake_threshold = 0.01, base_family = "Times New Roman", base_size = 18) {
     need <- c("gas", "brake")
     if (!all(need %in% names(lap_data))) stop("Missing columns: gas and brake")
-    lap_data <- downsample_for_plot(lap_data)
+    # % computed on the full-resolution lap, before downsampling for plotting
+    if ("lapTime" %in% names(lap_data)) lap_data <- lap_data %>% arrange(lapTime)
     lap_data <- lap_data %>%
-      mutate(overlap_flag = gas > throttle_threshold & brake > brake_threshold)
-    overlap_pts <- lap_data %>% filter(overlap_flag)
-    overlap_pct <- if (nrow(lap_data) > 0) (nrow(overlap_pts) / nrow(lap_data)) * 100 else NA_real_
+      mutate(overlap_flag = overlap_flag(gas, brake, throttle_threshold, brake_threshold))
+    overlap_pct <- lap_pct(lap_data$overlap_flag, lap_times(lap_data))
+    lap_data <- downsample_for_plot(lap_data)
     ggplot(lap_data, aes(x = carCoordinatesX, y = carCoordinatesZ)) +
       geom_path(color = "gray80", linewidth = 0.9) +
       geom_point(aes(color = overlap_flag), size = 1.3, alpha = 0.75) +
@@ -150,7 +161,7 @@ track_mapping_interactive <- function(
       coord_fixed() +
       labs(
         title = paste("Brake/Throt Overlap | Lap", lap_id),
-        subtitle = paste0("Brake > ", brake_threshold, " and throttle > ", throttle_threshold, ": ", sprintf("%.1f", overlap_pct), "% of samples"),
+        subtitle = paste0("Brake > ", brake_threshold, " and throttle > ", throttle_threshold, ": ", sprintf("%.1f", overlap_pct), "% of lap time"),
         x = "X Position (m)",
         y = "Z Position (m)",
         color = NULL
@@ -230,15 +241,14 @@ track_mapping_interactive <- function(
   plot_lateral_g_map <- function(lap_data, lap_id, cutoff_hz = 0, base_family = "Times New Roman", base_size = 18) {
     if (!("accGHorizontal" %in% names(lap_data))) stop("Missing column: accGHorizontal")
     clim <- max(abs(lap_data$accGHorizontal), na.rm = TRUE)
+    fs <- NA_real_
     if ("lapTime" %in% names(lap_data)) {
-      dt_ms <- median(diff(lap_data$lapTime), na.rm = TRUE)
-      fs <- if (!is.na(dt_ms) && dt_ms > 0) 1000 / dt_ms else NA_real_
-      lap_data <- lap_data |> mutate(
-        accGHorizontal = lowpass_filter(accGHorizontal, cutoff_hz, fs)
-      )
+      filtered <- lowpass_lap(lap_data$accGHorizontal, lap_data$lapTime, cutoff_hz)
+      fs <- attr(filtered, "fs")
+      lap_data <- lap_data |> mutate(accGHorizontal = as.numeric(filtered))
     }
     lap_data <- downsample_for_plot(lap_data)
-    subtitle_parts <- if (cutoff_hz > 0) paste0("Low-pass: ", cutoff_hz, " Hz") else "No filter"
+    subtitle_parts <- filter_subtitle(cutoff_hz, fs)
     ggplot(lap_data, aes(x = carCoordinatesX, y = carCoordinatesZ)) +
       geom_path(color = "gray80", linewidth = 0.7) +
       geom_point(aes(color = accGHorizontal), size = 1.1, alpha = 0.85) +
@@ -257,15 +267,12 @@ track_mapping_interactive <- function(
   plot_lateral_g_time <- function(lap_data, lap_id, cutoff_hz = 0, base_family = "Times New Roman", base_size = 18) {
     need <- c("accGHorizontal", "lapTime")
     if (!all(need %in% names(lap_data))) stop(paste("Missing columns:", paste(setdiff(need, names(lap_data)), collapse = ", ")))
-    dt_ms <- median(diff(lap_data$lapTime), na.rm = TRUE)
-    fs <- if (!is.na(dt_ms) && dt_ms > 0) 1000 / dt_ms else NA_real_
-    if (cutoff_hz > 0) {
-      lap_data <- lap_data |> mutate(accGHorizontal = lowpass_filter(accGHorizontal, cutoff_hz, fs))
-    }
-    lap_data <- lap_data |> mutate(time_s = lapTime / 1000)
+    filtered <- lowpass_lap(lap_data$accGHorizontal, lap_data$lapTime, cutoff_hz)
+    fs <- attr(filtered, "fs")
+    lap_data <- lap_data |> mutate(accGHorizontal = as.numeric(filtered), time_s = lapTime / 1000)
     lap_data <- downsample_for_plot(lap_data)
     clim <- max(abs(lap_data$accGHorizontal), na.rm = TRUE)
-    subtitle_parts <- if (cutoff_hz > 0) paste0("Low-pass: ", cutoff_hz, " Hz") else "No filter"
+    subtitle_parts <- filter_subtitle(cutoff_hz, fs)
     ggplot(lap_data, aes(x = time_s, y = accGHorizontal)) +
       geom_hline(yintercept = 0, color = "gray60", linewidth = 0.5) +
       geom_line(color = "gray75", linewidth = 0.5) +
@@ -381,7 +388,7 @@ track_mapping_interactive <- function(
         conditionalPanel(
           condition = "input.plots && (input.plots.indexOf('Lateral G map') >= 0 || input.plots.indexOf('Lateral G over time') >= 0)",
           sliderInput("lateral_g_cutoff", "Lateral G low-pass cutoff (Hz)  [0 = no filter]", min = 0, max = 20, value = 0, step = 0.5),
-          helpText("A cutoff of 2–5 Hz captures the driver's intentional steering inputs. Values above 5 Hz likely reflect suspension dynamics or road surface irregularities rather than deliberate steering actions. Set to 0 to view the raw signal.")
+          helpText("Optional smoothing of lateral acceleration (zero-phase 2nd-order Butterworth). Lower cutoffs remove more rapid fluctuations (e.g., kerbs, bumps, vibration) but also smooth genuine rapid changes and lower peak values. There is no single correct cutoff: choose one for your data and report the value used (shown in the plot subtitle with the sampling rate). Set to 0 for the raw signal.")
         ),
         conditionalPanel(
           condition = "input.plots && input.plots.indexOf('Brake/Throttle Overlap') >= 0",

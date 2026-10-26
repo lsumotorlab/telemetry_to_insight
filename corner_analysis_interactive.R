@@ -1,27 +1,18 @@
 options(shiny.maxRequestSize = 500 * 1024^2)
 
-# ---- Top-level utilities ----
-
-.ca_has_cols <- function(df, cols) all(cols %in% names(df))
-
-.ca_interp <- function(x, y, xout) {
-  ok <- is.finite(x) & is.finite(y)
-  x <- x[ok]; y <- y[ok]
-  if (length(x) < 2) return(rep(NA_real_, length(xout)))
-  ord <- order(x)
-  x <- x[ord]; y <- y[ord]
-  dup <- duplicated(x)
-  x <- x[!dup]; y <- y[!dup]
-  if (length(x) < 2) return(rep(NA_real_, length(xout)))
-  approx(x, y, xout, rule = 2)$y
-}
-
-.ca_lowpass <- function(x, cutoff_hz, fs) {
-  if (is.na(fs) || fs <= 0 || cutoff_hz <= 0 || cutoff_hz >= fs / 2) return(x)
-  W  <- cutoff_hz / (fs / 2)
-  bf <- signal::butter(2, W, type = "low")
-  as.numeric(signal::filtfilt(bf, x))
-}
+# Shared calculation functions (telemetry_core.R, same folder as this script):
+# has_cols(), interp_numeric(), lowpass_lap(), corner_summary_table(), ...
+local({
+  script_dir <- tryCatch(dirname(sys.frame(1)$ofile), error = function(e) NULL)
+  candidates <- c(file.path(script_dir, "telemetry_core.R"), "telemetry_core.R")
+  core <- candidates[file.exists(candidates)][1]
+  if (is.na(core)) {
+    stop("telemetry_core.R not found. Keep all toolkit files in one folder and open ",
+         "telemetry_to_insight.Rproj (or setwd() to that folder) before running this script.",
+         call. = FALSE)
+  }
+  source(core)
+})
 
 # ---- Window 1: Upload & Setup ----
 
@@ -196,7 +187,11 @@ options(shiny.maxRequestSize = 500 * 1024^2)
     output$marker_summary <- renderUI({
       tagList(
         tags$p(paste("Entry position:", if (is.null(entry_pos())) "—" else round(entry_pos(), 4))),
-        tags$p(paste("Exit position:",  if (is.null(exit_pos()))  "—" else round(exit_pos(),  4)))
+        tags$p(paste("Exit position:",  if (is.null(exit_pos()))  "—" else round(exit_pos(),  4))),
+        if (!is.null(entry_pos()) && !is.null(exit_pos()) && entry_pos() > exit_pos())
+          tags$p(style = "color: #cc6600;",
+                 "Exit is before entry: the corner crosses the start/finish line (orange section).",
+                 "If this is not intended, click Reset and select entry first, then exit.")
       )
     })
 
@@ -213,8 +208,12 @@ options(shiny.maxRequestSize = 500 * 1024^2)
         )
 
       if (!is.null(ep) && !is.null(xp)) {
-        lo <- min(ep, xp); hi <- max(ep, xp)
-        section <- ref_df |> dplyr::filter(.pos >= lo & .pos <= hi)
+        section <- if (ep <= xp) {
+          ref_df |> dplyr::filter(.pos >= ep & .pos <= xp)
+        } else {
+          # crosses the start/finish line: entry -> line -> exit
+          ref_df |> dplyr::filter(.pos >= ep | .pos <= xp) |> dplyr::arrange(.pos < ep, .pos)
+        }
         if (nrow(section) > 0) {
           p <- p |> add_trace(
             data = section, x = ~.x, y = ~.z,
@@ -303,31 +302,45 @@ options(shiny.maxRequestSize = 500 * 1024^2)
   BF <- "Times New Roman"
   BS <- 18
 
+  # A corner with entry > exit crosses the start/finish line. Its data are made
+  # continuous with corner_unwrap() (telemetry_core.R), so it runs from
+  # entry_pos to exit_c = exit_pos + 1; axes show positions modulo 1.
+  crosses_line <- entry_pos > exit_pos
+  exit_c       <- if (crosses_line) exit_pos + 1 else exit_pos
+  pos_labels   <- function(x) percent(x %% 1, accuracy = 0.1)
+
   laps_all <- sort(unique(telemetry$lapCount))
   laps_all <- laps_all[laps_all > 0]
-  if (".synthetic" %in% names(telemetry)) {
-    synth_laps <- unique(telemetry$lapCount[telemetry$.synthetic == TRUE])
-    laps_all   <- setdiff(laps_all, synth_laps)
-  }
 
-  g_axis_lim <- if (.ca_has_cols(telemetry, c("accGHorizontal", "accGFrontal"))) {
-    raw_max <- max(abs(c(telemetry$accGHorizontal, telemetry$accGFrontal)), na.rm = TRUE)
-    ceiling(raw_max * 10) / 10
+  # Composite reference lap (from create_synthetic_lap.R): available for
+  # analysis and as the reference lap, labeled, and left out of the
+  # across-lap consistency statistics
+  comp_laps <- if (".synthetic" %in% names(telemetry)) {
+    unique(telemetry$lapCount[telemetry$.synthetic %in% TRUE])
+  } else {
+    integer(0)
+  }
+  lap_lbl <- function(l) {
+    ifelse(l %in% comp_laps, paste0("Lap ", l, " (composite ref.)"), paste0("Lap ", l))
+  }
+  comp_labels <- lap_lbl(comp_laps)
+
+  # Axis range of the traction circle: 99.9th percentile of |G|, so single
+  # spikes (e.g., impacts) do not shrink the plot; more extreme points fall
+  # outside the visible range
+  g_axis_lim <- if (has_cols(telemetry, c("accGHorizontal", "accGFrontal"))) {
+    g_abs <- abs(c(telemetry$accGHorizontal, telemetry$accGFrontal))
+    ceiling(stats::quantile(g_abs, 0.999, na.rm = TRUE, names = FALSE) * 10) / 10
   } else {
     NULL
   }
 
-  max_brake_g <- if (.ca_has_cols(telemetry, "accGFrontal")) {
-    braking <- telemetry$accGFrontal[is.finite(telemetry$accGFrontal) & telemetry$accGFrontal < 0]
-    if (length(braking) > 0) max(abs(braking)) else NA_real_
-  } else {
-    NA_real_
-  }
-  recommended_grip <- if (is.finite(max_brake_g)) round(max_brake_g * 0.9, 2) else NA_real_
-
   # ---- data ----
 
-  get_corner_data <- function(pre_sec, post_sec, selected_laps) {
+  # Lateral G is filtered over the whole lap before the corner window is cut,
+  # so the filter's start-up at the window edges does not affect the corner.
+  # accGHorizontal_raw keeps the unfiltered values for "Max Lateral G (raw)".
+  get_corner_data <- function(pre_sec, post_sec, selected_laps, cutoff_hz = 0) {
     purrr::map_dfr(selected_laps, function(lid) {
       lap_df <- telemetry |>
         filter(lapCount == lid) |>
@@ -336,22 +349,33 @@ options(shiny.maxRequestSize = 500 * 1024^2)
 
       if (nrow(lap_df) < 2) return(tibble())
 
+      if (has_cols(lap_df, "accGHorizontal")) {
+        lap_df <- lap_df |>
+          mutate(accGHorizontal_raw = accGHorizontal,
+                 accGHorizontal = as.numeric(lowpass_lap(accGHorizontal, lapTime, cutoff_hz)))
+      }
+
+      lap_df <- corner_unwrap(lap_df, entry_pos, exit_pos) |>
+        filter(is.finite(lapTime)) |>
+        arrange(carPositionNormalized)
+      if (nrow(lap_df) < 2) return(tibble())
+
       entry_idx <- which.min(abs(lap_df$carPositionNormalized - entry_pos))
-      exit_idx  <- which.min(abs(lap_df$carPositionNormalized - exit_pos))
+      exit_idx  <- which.min(abs(lap_df$carPositionNormalized - exit_c))
       entry_t   <- lap_df$lapTime[entry_idx]
       exit_t    <- lap_df$lapTime[exit_idx]
 
       if (!is.finite(entry_t) || !is.finite(exit_t) || entry_t >= exit_t) {
         filtered <- lap_df |>
-          filter(carPositionNormalized >= min(entry_pos, exit_pos),
-                 carPositionNormalized <= max(entry_pos, exit_pos))
+          filter(carPositionNormalized >= min(entry_pos, exit_c),
+                 carPositionNormalized <= max(entry_pos, exit_c))
       } else {
         filtered <- lap_df |>
           filter(lapTime >= entry_t - pre_sec * 1000,
                  lapTime <= exit_t  + post_sec * 1000)
       }
 
-      filtered |> mutate(lap_label = paste0("Lap ", lid))
+      filtered |> mutate(lap_label = lap_lbl(lid))
     })
   }
 
@@ -379,13 +403,16 @@ options(shiny.maxRequestSize = 500 * 1024^2)
 
   # ---- traction circle ----
 
-  plot_traction_circle <- function(df, grip_limit, axis_lim = NULL) {
-    if (!.ca_has_cols(df, c("accGHorizontal", "accGFrontal"))) {
+  # Optional dashed circle of a user-chosen radius, for visual reference only.
+  # It is not the car's grip limit, which depends on speed, load, tires and
+  # direction and cannot be derived from these data.
+  plot_traction_circle <- function(df, ref_radius, axis_lim = NULL) {
+    if (!has_cols(df, c("accGHorizontal", "accGFrontal"))) {
       return(make_error_plot("accGHorizontal or accGFrontal not found in data"))
     }
 
     theta     <- seq(0, 2 * pi, length.out = 300)
-    radius    <- grip_limit
+    radius    <- ref_radius
 
     p <- ggplot(df, aes(x = accGHorizontal, y = accGFrontal, color = lap_label))
 
@@ -407,7 +434,7 @@ options(shiny.maxRequestSize = 500 * 1024^2)
         y       = "Longitudinal G",
         color   = NULL,
         caption = if (is.numeric(radius) && is.finite(radius) && radius > 0)
-                    sprintf("Dashed circle = %.2f G (user defined)", radius)
+                    sprintf("Dashed circle = %.2f G reference (illustrative; not the car's grip limit)", radius)
                   else
                     NULL
       ) +
@@ -418,15 +445,15 @@ options(shiny.maxRequestSize = 500 * 1024^2)
   # ---- speed trace ----
 
   plot_speed_trace <- function(df) {
-    if (!.ca_has_cols(df, c("carPositionNormalized", "speedKmh"))) {
+    if (!has_cols(df, c("carPositionNormalized", "speedKmh"))) {
       return(make_error_plot("speedKmh not found in data"))
     }
 
     ggplot(df, aes(x = carPositionNormalized, y = speedKmh, color = lap_label)) +
       geom_line(linewidth = 0.9, alpha = 0.85) +
       geom_vline(xintercept = entry_pos, linetype = "dashed", color = "green4", linewidth = 0.7) +
-      geom_vline(xintercept = exit_pos,  linetype = "dashed", color = "red3",   linewidth = 0.7) +
-      scale_x_continuous(labels = percent_format(accuracy = 0.1)) +
+      geom_vline(xintercept = exit_c, linetype = "dashed", color = "red3",   linewidth = 0.7) +
+      scale_x_continuous(labels = pos_labels) +
       labs(
         title = "Speed Through Corner",
         x     = "Normalized lap position",
@@ -453,8 +480,8 @@ options(shiny.maxRequestSize = 500 * 1024^2)
       ggplot(df, aes(x = carPositionNormalized, y = .data[[col]], color = lap_label)) +
         geom_line(linewidth = 0.8, alpha = 0.85) +
         geom_vline(xintercept = entry_pos, linetype = "dashed", color = "green4", linewidth = 0.7) +
-        geom_vline(xintercept = exit_pos,  linetype = "dashed", color = "red3",   linewidth = 0.7) +
-        scale_x_continuous(labels = percent_format(accuracy = 0.1)) +
+        geom_vline(xintercept = exit_c, linetype = "dashed", color = "red3",   linewidth = 0.7) +
+        scale_x_continuous(labels = pos_labels) +
         scale_y_continuous(labels = percent_format(accuracy = 1)) +
         labs(x = "Normalized lap position", y = panel_title, color = NULL) +
         theme_classic(base_family = BF, base_size = BS) +
@@ -487,47 +514,8 @@ options(shiny.maxRequestSize = 500 * 1024^2)
 
   # ---- summary table ----
 
-  make_summary_table <- function(df) {
-    if (!.ca_has_cols(df, c("speedKmh", "lapTime", "carPositionNormalized"))) return(NULL)
-
-    df |>
-      group_by(lap_label) |>
-      summarise(
-        corner_time_s   = (.ca_interp(carPositionNormalized, lapTime, exit_pos) -
-                             .ca_interp(carPositionNormalized, lapTime, entry_pos)) / 1000,
-        entry_speed_kmh = .ca_interp(carPositionNormalized, speedKmh, entry_pos),
-        min_speed_kmh   = min(speedKmh[carPositionNormalized >= min(entry_pos, exit_pos) &
-                                        carPositionNormalized <= max(entry_pos, exit_pos)],
-                              na.rm = TRUE),
-        avg_speed_kmh   = {
-                           in_s <- carPositionNormalized >= min(entry_pos, exit_pos) &
-                                   carPositionNormalized <= max(entry_pos, exit_pos) &
-                                   is.finite(speedKmh)
-                           v_s <- speedKmh[in_s]
-                           if (length(v_s) == 0) NA_real_ else mean(v_s)
-                         },
-        exit_speed_kmh  = .ca_interp(carPositionNormalized, speedKmh, exit_pos),
-        max_lat_g       = if (.ca_has_cols(df, "accGHorizontal"))
-                            max(abs(accGHorizontal[carPositionNormalized >= min(entry_pos, exit_pos) &
-                                                    carPositionNormalized <= max(entry_pos, exit_pos)]),
-                                na.rm = TRUE)
-                          else NA_real_,
-        max_brake_g     = if (.ca_has_cols(df, "accGFrontal")) {
-                            vals <- accGFrontal[carPositionNormalized >= min(entry_pos, exit_pos) &
-                                                carPositionNormalized <= max(entry_pos, exit_pos) &
-                                                accGFrontal < 0]
-                            if (length(vals) == 0) NA_real_ else max(abs(vals), na.rm = TRUE)
-                          } else NA_real_,
-        max_accel_g     = if (.ca_has_cols(df, "accGFrontal")) {
-                            vals <- accGFrontal[carPositionNormalized >= min(entry_pos, exit_pos) &
-                                                carPositionNormalized <= max(entry_pos, exit_pos) &
-                                                accGFrontal > 0]
-                            if (length(vals) == 0) NA_real_ else max(vals, na.rm = TRUE)
-                          } else NA_real_,
-        .groups = "drop"
-      ) |>
-      arrange(corner_time_s)
-  }
+  # Calculation in telemetry_core.R (corner_summary_table)
+  make_summary_table <- function(df) corner_summary_table(df, entry_pos, exit_c)
 
   # ---- speed delta ----
 
@@ -535,14 +523,14 @@ options(shiny.maxRequestSize = 500 * 1024^2)
     if (is.null(ref_lap)) {
       return(make_error_plot("Choose a reference lap in the sidebar to see the delta."))
     }
-    if (!.ca_has_cols(df, c("speedKmh", "carPositionNormalized"))) {
+    if (!has_cols(df, c("speedKmh", "carPositionNormalized"))) {
       return(make_error_plot("speedKmh not found in data"))
     }
 
-    ref_label <- paste0("Lap ", ref_lap)
+    ref_label <- lap_lbl(ref_lap)
     ref_df    <- df |> filter(lap_label == ref_label)
     if (nrow(ref_df) == 0) {
-      return(make_error_plot(paste("Lap", ref_lap, "is not in the selected laps")))
+      return(make_error_plot(paste(ref_label, "is not in the selected laps")))
     }
 
     grid <- seq(
@@ -550,7 +538,7 @@ options(shiny.maxRequestSize = 500 * 1024^2)
       max(df$carPositionNormalized, na.rm = TRUE),
       length.out = 500
     )
-    ref_speed <- .ca_interp(ref_df$carPositionNormalized, ref_df$speedKmh, grid)
+    ref_speed <- interp_numeric(ref_df$carPositionNormalized, ref_df$speedKmh, grid)
 
     other_labels <- setdiff(unique(df$lap_label), ref_label)
     if (length(other_labels) == 0) {
@@ -559,7 +547,7 @@ options(shiny.maxRequestSize = 500 * 1024^2)
 
     delta_df <- purrr::map_dfr(other_labels, function(lbl) {
       other_df    <- df |> filter(lap_label == lbl)
-      other_speed <- .ca_interp(other_df$carPositionNormalized, other_df$speedKmh, grid)
+      other_speed <- interp_numeric(other_df$carPositionNormalized, other_df$speedKmh, grid)
       tibble(
         carPositionNormalized = grid,
         delta_kmh             = other_speed - ref_speed,
@@ -571,11 +559,11 @@ options(shiny.maxRequestSize = 500 * 1024^2)
       geom_hline(yintercept = 0, linetype = "dashed", color = "grey40", linewidth = 0.7) +
       geom_line(linewidth = 0.9, alpha = 0.85) +
       geom_vline(xintercept = entry_pos, linetype = "dashed", color = "green4", linewidth = 0.7) +
-      geom_vline(xintercept = exit_pos,  linetype = "dashed", color = "red3",   linewidth = 0.7) +
-      scale_x_continuous(labels = percent_format(accuracy = 0.1)) +
+      geom_vline(xintercept = exit_c, linetype = "dashed", color = "red3",   linewidth = 0.7) +
+      scale_x_continuous(labels = pos_labels) +
       labs(
-        title    = paste("Speed Delta vs Lap", ref_lap),
-        subtitle = "Positive = faster than reference",
+        title    = paste("Speed Delta vs", ref_label),
+        subtitle = "Positive = higher speed than reference",
         x        = "Normalized lap position",
         y        = "Speed delta (km/h)",
         color    = NULL
@@ -590,14 +578,14 @@ options(shiny.maxRequestSize = 500 * 1024^2)
     if (is.null(ref_lap)) {
       return(make_error_plot("Choose a reference lap in the sidebar to see the delta."))
     }
-    if (!.ca_has_cols(df, c("lapTime", "carPositionNormalized"))) {
+    if (!has_cols(df, c("lapTime", "carPositionNormalized"))) {
       return(make_error_plot("lapTime not found in data"))
     }
 
-    ref_label <- paste0("Lap ", ref_lap)
+    ref_label <- lap_lbl(ref_lap)
     ref_df    <- df |> filter(lap_label == ref_label)
     if (nrow(ref_df) == 0) {
-      return(make_error_plot(paste("Lap", ref_lap, "is not in the selected laps")))
+      return(make_error_plot(paste(ref_label, "is not in the selected laps")))
     }
 
     grid <- seq(
@@ -605,7 +593,7 @@ options(shiny.maxRequestSize = 500 * 1024^2)
       max(df$carPositionNormalized, na.rm = TRUE),
       length.out = 500
     )
-    ref_time <- .ca_interp(ref_df$carPositionNormalized, ref_df$lapTime, grid)
+    ref_time <- interp_numeric(ref_df$carPositionNormalized, ref_df$lapTime, grid)
 
     other_labels <- setdiff(unique(df$lap_label), ref_label)
     if (length(other_labels) == 0) {
@@ -614,8 +602,8 @@ options(shiny.maxRequestSize = 500 * 1024^2)
 
     delta_df <- purrr::map_dfr(other_labels, function(lbl) {
       other_df   <- df |> filter(lap_label == lbl)
-      other_time <- .ca_interp(other_df$carPositionNormalized, other_df$lapTime, grid)
-      raw_delta  <- (ref_time - other_time) / 1000
+      other_time <- interp_numeric(other_df$carPositionNormalized, other_df$lapTime, grid)
+      raw_delta  <- (other_time - ref_time) / 1000  # comparison - reference
       tibble(
         carPositionNormalized = grid,
         delta_s               = raw_delta - raw_delta[1],
@@ -627,11 +615,11 @@ options(shiny.maxRequestSize = 500 * 1024^2)
       geom_hline(yintercept = 0, linetype = "dashed", color = "grey40", linewidth = 0.7) +
       geom_line(linewidth = 0.9, alpha = 0.85) +
       geom_vline(xintercept = entry_pos, linetype = "dashed", color = "green4", linewidth = 0.7) +
-      geom_vline(xintercept = exit_pos,  linetype = "dashed", color = "red3",   linewidth = 0.7) +
-      scale_x_continuous(labels = percent_format(accuracy = 0.1)) +
+      geom_vline(xintercept = exit_c, linetype = "dashed", color = "red3",   linewidth = 0.7) +
+      scale_x_continuous(labels = pos_labels) +
       labs(
-        title    = paste("Cumulative Time Delta vs Lap", ref_lap),
-        subtitle = "Positive = faster than reference",
+        title    = paste("Cumulative Time Delta vs", ref_label),
+        subtitle = "Positive = slower than reference (time lost)",
         x        = "Normalized lap position",
         y        = "Time delta (s)",
         color    = NULL
@@ -644,15 +632,17 @@ options(shiny.maxRequestSize = 500 * 1024^2)
 
   consistency_long <- function(df) {
     tbl <- make_summary_table(df)
+    # driven laps only: the composite reference lap is not part of lap-to-lap variability
+    if (!is.null(tbl)) tbl <- tbl |> filter(!(lap_label %in% comp_labels))
     if (is.null(tbl) || nrow(tbl) < 2) return(NULL)
     tbl |>
-      mutate(lap_num = as.integer(gsub("Lap ", "", lap_label))) |>
+      mutate(lap_num = as.integer(sub("^Lap (\\d+).*$", "\\1", lap_label))) |>
       arrange(lap_num) |>
       select(lap_label, lap_num, corner_time_s, entry_speed_kmh, min_speed_kmh, exit_speed_kmh,
-             any_of(c("max_lat_g", "max_brake_g", "max_accel_g"))) |>
+             any_of(c("max_lat_g_raw", "max_lat_g", "max_brake_g", "max_accel_g"))) |>
       pivot_longer(
         cols      = c(corner_time_s, entry_speed_kmh, min_speed_kmh, exit_speed_kmh,
-                      any_of(c("max_lat_g", "max_brake_g", "max_accel_g"))),
+                      any_of(c("max_lat_g_raw", "max_lat_g", "max_brake_g", "max_accel_g"))),
         names_to  = "metric",
         values_to = "value"
       ) |>
@@ -661,7 +651,8 @@ options(shiny.maxRequestSize = 500 * 1024^2)
         entry_speed_kmh = "Entry Speed (km/h)",
         min_speed_kmh   = "Min Speed (km/h)",
         exit_speed_kmh  = "Exit Speed (km/h)",
-        max_lat_g       = "Max Lateral G",
+        max_lat_g_raw   = "Max Lateral G (raw)",
+        max_lat_g       = "Max Lateral G (filtered)",
         max_brake_g     = "Max Braking G",
         max_accel_g     = "Max Accel. G"
       ))
@@ -716,7 +707,7 @@ options(shiny.maxRequestSize = 500 * 1024^2)
 
   plot_corner_map <- function(df, color_var = "speedKmh") {
     needed <- c("carCoordinatesX", "carCoordinatesZ", "carPositionNormalized", color_var)
-    if (!.ca_has_cols(df, needed)) {
+    if (!has_cols(df, needed)) {
       return(make_error_plot(paste("Column not found in data:", color_var)))
     }
 
@@ -729,9 +720,9 @@ options(shiny.maxRequestSize = 500 * 1024^2)
     label_map    <- c(speedKmh = "Speed (km/h)", accGHorizontal = "Lateral G",
                       accGFrontal = "Longitudinal G", gas = "Throttle", brake = "Brake")
     legend_label <- label_map[[color_var]]
-    palette_hint <- if (color_var == "gas") "(grey = low, green = high)"
+    palette_hint <- if (color_var == "gas") "(gray = low, green = high)"
                     else if (color_var == "accGFrontal") "(red = braking, white = 0, green = acceleration)"
-                    else if (color_var == "brake") "(grey = low, red = high)"
+                    else if (color_var == "brake") "(gray = low, red = high)"
                     else if (color_var == "speedKmh") "(red = low, green = high)"
                     else "(blue = left, white = 0, orange = right)"
     plot_title   <- paste0("Corner Map — ", legend_label, " ", palette_hint)
@@ -776,6 +767,7 @@ options(shiny.maxRequestSize = 500 * 1024^2)
     sidebarLayout(
       sidebarPanel(
         tags$b(sprintf("Corner: pos %.4f → %.4f", entry_pos, exit_pos)),
+        if (crosses_line) tags$p("Crosses the start/finish line: the end of each lap is joined to its start, as for sector times."),
         tags$hr(),
         sliderInput("pre_buf",  "Seconds before entry (plots only)",
                     min = 0, max = 10, value = 1, step = 0.5),
@@ -789,8 +781,11 @@ options(shiny.maxRequestSize = 500 * 1024^2)
         ),
         tags$br(),
         checkboxGroupInput("selected_laps", label = NULL,
-                           choices  = laps_all,
-                           selected = laps_all),
+                           choiceNames  = ifelse(laps_all %in% comp_laps,
+                                                 paste0(laps_all, " (composite reference)"),
+                                                 as.character(laps_all)),
+                           choiceValues = as.character(laps_all),
+                           selected     = as.character(laps_all)),
         tags$hr(),
         uiOutput("ref_ui"),
         tags$hr(),
@@ -804,19 +799,24 @@ options(shiny.maxRequestSize = 500 * 1024^2)
                                  "Brake"           = "brake"),
                     selected = "speedKmh"),
         tags$hr(),
-        numericInput("grip_limit", "Grip limit (G) — leave blank to hide circle",
-                     value = recommended_grip, min = 0.1, step = 0.1),
-        if (is.finite(recommended_grip))
-          tags$small(style = "color: #666;",
-            sprintf("Suggested: %.2f G  (90%% of max braking %.2f G across all laps)",
-                    recommended_grip, max_brake_g)),
+        numericInput("ref_circle", "Reference circle radius (G) — leave blank to hide",
+                     value = NA, min = 0.1, step = 0.1),
+        tags$small(style = "color: #666;",
+          "Draws a dashed circle on the Traction Circle for visual reference only.",
+          "It is not the car's grip limit, which depends on speed, load, tires and",
+          "direction and cannot be derived from these data."),
         tags$hr(),
         sliderInput("lateral_g_cutoff",
                     "Lateral G low-pass cutoff (Hz)  [0 = no filter]",
                     min = 0, max = 20, value = 0, step = 0.5),
-        helpText("2–5 Hz captures driver steering inputs. Above 5 Hz likely reflects",
-                 "suspension or road surface noise. Set to 0 for the raw signal.",
-                 "Affects: Traction Circle, Corner Map (Lateral G), max_lat_g in summary tables.")
+        helpText("Optional smoothing of lateral acceleration (zero-phase 2nd-order Butterworth).",
+                 "Lower cutoffs remove more rapid fluctuations (e.g., kerbs, bumps, vibration) but",
+                 "also smooth genuine rapid changes and lower peak values. There is no single correct",
+                 "cutoff: choose one for your data and report the value used. Set to 0 for the raw signal.",
+                 "Applied to the whole lap before the corner is cut out. Affects: Traction Circle,",
+                 "Corner Map (Lateral G), 'Max Lateral G (filtered)' in the tables; 'Max Lateral G (raw)'",
+                 "is always unfiltered.",
+                 "Longitudinal acceleration is not filtered.")
       ),
       mainPanel(
         tabsetPanel(
@@ -848,7 +848,7 @@ options(shiny.maxRequestSize = 500 * 1024^2)
   server <- function(input, output, session) {
 
     observeEvent(input$select_all, {
-      updateCheckboxGroupInput(session, "selected_laps", selected = laps_all)
+      updateCheckboxGroupInput(session, "selected_laps", selected = as.character(laps_all))
     })
 
     observeEvent(input$deselect_all, {
@@ -858,7 +858,7 @@ options(shiny.maxRequestSize = 500 * 1024^2)
     output$ref_ui <- renderUI({
       req(input$selected_laps)
       laps <- as.integer(input$selected_laps)
-      choices <- c("None" = "0", setNames(as.character(laps), paste0("Lap ", laps)))
+      choices <- c("None" = "0", setNames(as.character(laps), lap_lbl(laps)))
       current  <- isolate(input$ref_lap)
       selected <- if (!is.null(current) && current %in% as.character(laps)) current else "0"
       selectInput("ref_lap", "Reference lap", choices = choices, selected = selected)
@@ -869,25 +869,13 @@ options(shiny.maxRequestSize = 500 * 1024^2)
       laps <- as.integer(input$selected_laps)
       if (length(laps) == 0) return(NULL)
 
-      df <- get_corner_data(
+      cutoff <- input$lateral_g_cutoff
+      get_corner_data(
         pre_sec       = input$pre_buf,
         post_sec      = input$post_buf,
-        selected_laps = laps
+        selected_laps = laps,
+        cutoff_hz     = if (is.null(cutoff)) 0 else cutoff
       )
-
-      cutoff <- input$lateral_g_cutoff
-      if (!is.null(cutoff) && cutoff > 0 && .ca_has_cols(df, c("accGHorizontal", "lapTime"))) {
-        df <- df |>
-          group_by(lap_label) |>
-          group_modify(function(gdf, key) {
-            dt_ms <- median(diff(gdf$lapTime), na.rm = TRUE)
-            fs    <- if (!is.na(dt_ms) && dt_ms > 0) 1000 / dt_ms else NA_real_
-            gdf |> mutate(accGHorizontal = .ca_lowpass(accGHorizontal, cutoff, fs))
-          }) |>
-          ungroup()
-      }
-
-      df
     })
 
     ref_lap_rv <- reactive({
@@ -898,7 +886,7 @@ options(shiny.maxRequestSize = 500 * 1024^2)
 
     output$plot_tc <- renderPlotly({
       df <- corner_data_rv(); req(df)
-      safe_plot(plot_traction_circle(df, input$grip_limit, axis_lim = g_axis_lim), input$show_hover)
+      safe_plot(plot_traction_circle(df, input$ref_circle, axis_lim = g_axis_lim), input$show_hover)
     })
 
     output$plot_speed <- renderPlotly({
@@ -920,7 +908,7 @@ options(shiny.maxRequestSize = 500 * 1024^2)
       tbl_df <- make_summary_table(df)
       req(tbl_df)
 
-      ref_label <- if (!is.null(ref_lap_rv())) paste0("Lap ", ref_lap_rv()) else NULL
+      ref_label <- if (!is.null(ref_lap_rv())) lap_lbl(ref_lap_rv()) else NULL
 
       gt_tbl <- tbl_df |>
         gt() |>
@@ -931,11 +919,17 @@ options(shiny.maxRequestSize = 500 * 1024^2)
           min_speed_kmh   = "Min Speed (km/h)",
           avg_speed_kmh   = "Avg Speed (km/h)",
           exit_speed_kmh  = "Exit Speed (km/h)",
-          max_lat_g       = "Max Lateral G",
+          max_lat_g_raw   = "Max Lateral G (raw)",
+          max_lat_g       = "Max Lateral G (filtered)",
           max_brake_g     = "Max Braking G",
           max_accel_g     = "Max Accel. G"
         ) |>
         fmt_number(columns = where(is.numeric), decimals = 2) |>
+        tab_source_note(paste0(
+          "Lateral G filter: ",
+          if (isTRUE(input$lateral_g_cutoff > 0)) paste0(input$lateral_g_cutoff, " Hz low-pass, applied to the whole lap") else "none",
+          ". Longitudinal acceleration is not filtered."
+        )) |>
         tab_options(
           table.font.names = "Times New Roman",
           table.font.size  = px(16)

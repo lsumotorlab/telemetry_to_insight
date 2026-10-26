@@ -1,0 +1,13 @@
+case,check,expected,calculated,pass
+A exact position,deviation (% lap),0,4.312971868536408e-7,TRUE
+A exact position,coverage (% lap),100,99.97833333424718,TRUE
+A exact position,no position flag,0,0,TRUE
+B start offset 0.0009,deviation (% lap),0,4.312971868536408e-7,TRUE
+B start offset 0.0009,coverage (% lap),100,99.97833333424718,TRUE
+B start offset 0.0009,no position flag,0,0,TRUE
+C distorted position,deviation (% lap),7.957747154594768,7.963043475404763,TRUE
+C distorted position,flagged,1,1,TRUE
+D incomplete lap,coverage (% lap),75.44083036665981,75.44083036665981,TRUE
+D incomplete lap,flagged,1,1,TRUE
+E coordinates missing,deviation not calculated,NA,NA,TRUE
+E coordinates missing,no position flag,0,0,TRUE

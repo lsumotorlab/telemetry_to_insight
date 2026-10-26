@@ -8,18 +8,18 @@ suppressPackageStartupMessages({
   library(gt)
 })
 
-# =============================================================================
-# Helper: normalize synthetic lap input into a character vector
-# =============================================================================
-as_syn_laps <- function(x) {
-  if (is.null(x)) return(character(0))
-  if (length(x) == 0) return(character(0))
-  x <- x[!is.na(x)]
-  if (length(x) == 0) return(character(0))
-  x <- as.character(x)
-  x <- x[x != ""]
-  unique(x)
-}
+# Shared calculation functions (telemetry_core.R, same folder as this script)
+local({
+  script_dir <- tryCatch(dirname(sys.frame(1)$ofile), error = function(e) NULL)
+  candidates <- c(file.path(script_dir, "telemetry_core.R"), "telemetry_core.R")
+  core <- candidates[file.exists(candidates)][1]
+  if (is.na(core)) {
+    stop("telemetry_core.R not found. Keep all toolkit files in one folder and open ",
+         "telemetry_to_insight.Rproj (or setwd() to that folder) before running this script.",
+         call. = FALSE)
+  }
+  source(core)
+})
 
 # =============================================================================
 # DATA LOADING FUNCTION
@@ -36,93 +36,8 @@ load_telemetry <- function(file_path, flip_horizontal = TRUE, flip_vertical = FA
   telemetry
 }
 
-# =============================================================================
-# LAP STATISTICS
-# =============================================================================
-calculate_lap_stats <- function(
-    telemetry,
-    lap_num,
-    full_throttle_threshold = 0.99,
-    braking_threshold = 0.01
-) {
-  lap_data <- telemetry |>
-    dplyr::filter(lapCount == lap_num)
-  
-  if (nrow(lap_data) == 0) return(NULL)
-  
-  lap_data |>
-    dplyr::summarise(
-      Lap = lap_num,
-      `Lap Time (s)` = max(lapTime, na.rm = TRUE) / 1000,
-      `Full Throttle (%)` = (sum(gas > full_throttle_threshold, na.rm = TRUE) / dplyr::n()) * 100,
-      `Braking (%)` = (sum(brake > braking_threshold, na.rm = TRUE) / dplyr::n()) * 100,
-      `Brake/Throttle Overlap (%)` = (
-        sum(
-          gas > full_throttle_threshold &
-            brake > braking_threshold,
-          na.rm = TRUE
-        ) / dplyr::n()
-      ) * 100,
-      `Avg Speed (km/h)` = mean(speedKmh, na.rm = TRUE),
-      `Max Speed (km/h)` = max(speedKmh, na.rm = TRUE),
-      `Min Speed (km/h)` = min(speedKmh, na.rm = TRUE),
-      `ABS Active (%)` = (sum(isAbsInAction == 1, na.rm = TRUE) / dplyr::n()) * 100,
-      `TC Active (%)` = (sum(isTcInAction == 1, na.rm = TRUE) / dplyr::n()) * 100,
-      `Max Lateral G` = if ("accGHorizontal" %in% names(lap_data)) max(abs(accGHorizontal), na.rm = TRUE) else NA_real_,
-      `Max Accel G` = if ("accGFrontal" %in% names(lap_data)) max(accGFrontal, na.rm = TRUE) else NA_real_,
-      `Max Brake G` = if ("accGFrontal" %in% names(lap_data)) min(accGFrontal, na.rm = TRUE) else NA_real_,
-      .groups = "drop"
-    )
-}
-
-calculate_multiple_laps <- function(
-    telemetry,
-    lap_numbers,
-    full_throttle_threshold = 0.99,
-    braking_threshold = 0.01
-) {
-  lap_numbers <- as.integer(lap_numbers)
-  purrr::map_dfr(
-    lap_numbers,
-    \(x) calculate_lap_stats(
-      telemetry,
-      x,
-      full_throttle_threshold = full_throttle_threshold,
-      braking_threshold = braking_threshold
-    )
-  )
-}
-
-# =============================================================================
-# SUMMARY STATISTICS
-# =============================================================================
-get_summary_stats <- function(lap_stats_table, synthetic_lap = NA) {
-  syn <- as_syn_laps(synthetic_lap)
-  
-  df <- lap_stats_table
-  if ("Lap" %in% names(df) && length(syn) > 0) {
-    df <- df |> dplyr::filter(!(as.character(.data$Lap) %in% syn))
-  }
-  
-  df |>
-    dplyr::select(-dplyr::any_of("Lap")) |>
-    dplyr::summarise(
-      dplyr::across(
-        dplyr::where(is.numeric),
-        list(
-          Mean = \(x) mean(x, na.rm = TRUE),
-          SD = \(x) sd(x, na.rm = TRUE),
-          Min = \(x) min(x, na.rm = TRUE),
-          Max = \(x) max(x, na.rm = TRUE)
-        ),
-        .names = "{.col}_{.fn}"
-      ),
-      .groups = "drop"
-    ) |>
-    tidyr::pivot_longer(dplyr::everything(), names_to = "Metric", values_to = "Value") |>
-    tidyr::separate(Metric, into = c("Metric", "Statistic"), sep = "_(?=[^_]+$)") |>
-    tidyr::pivot_wider(names_from = Metric, values_from = Value)
-}
+# Lap statistics: calculate_lap_stats(), calculate_multiple_laps() and
+# get_summary_stats() are in telemetry_core.R
 
 # =============================================================================
 # LABELING FOR TABLES ONLY
@@ -132,8 +47,8 @@ add_synthetic_labels <- function(lap_stats, synthetic_lap = NA) {
   
   lap_stats |>
     dplyr::mutate(
-      LapType = dplyr::if_else(length(syn) > 0 & as.character(.data$Lap) %in% syn, "Synthetic", "Lap"),
-      LapLabel = dplyr::if_else(LapType == "Synthetic", paste0(.data$Lap, " (Synthetic)"), as.character(.data$Lap))
+      LapType = dplyr::if_else(length(syn) > 0 & as.character(.data$Lap) %in% syn, "Composite reference", "Lap"),
+      LapLabel = dplyr::if_else(LapType == "Composite reference", paste0(.data$Lap, " (Composite reference)"), as.character(.data$Lap))
     ) |>
     dplyr::relocate(LapLabel, LapType, .after = Lap)
 }
@@ -145,7 +60,8 @@ run_telemetry_app <- function(
     default_flip_horizontal = TRUE,
     default_flip_vertical = FALSE,
     default_full_throttle_threshold = 0.99,
-    default_braking_threshold = 0.01
+    default_braking_threshold = 0.01,
+    default_lateral_cutoff_hz = 5
 ) {
   
   ui <- fluidPage(
@@ -188,6 +104,19 @@ run_telemetry_app <- function(
           value = default_braking_threshold * 100,
           step = 1
         ),
+        sliderInput(
+          "lateral_cutoff",
+          "Lateral G low-pass cutoff (Hz)  [0 = no filter]",
+          min = 0,
+          max = 20,
+          value = default_lateral_cutoff_hz,
+          step = 0.5
+        ),
+        helpText("Used for 'Max Lateral G (filtered)'; 'Max Lateral G (raw)' is always unfiltered.",
+                 "Lower cutoffs remove more rapid fluctuations (e.g., kerbs, bumps, vibration) but",
+                 "also smooth genuine rapid changes and lower peak values. There is no single correct",
+                 "cutoff: choose one for your data and report the value used.",
+                 "Longitudinal acceleration is not filtered."),
         hr(),
         h4("Select Laps"),
         uiOutput("laps_ui"),
@@ -252,11 +181,18 @@ run_telemetry_app <- function(
     output$synthetic_ui <- renderUI({
       req(available_laps())
       laps <- available_laps()
+      # Pre-select the composite reference lap if the file marks it
+      tel <- telemetry()
+      marked <- if (".synthetic" %in% names(tel)) {
+        as.character(unique(tel$lapCount[tel$.synthetic %in% TRUE]))
+      } else {
+        character(0)
+      }
       selectInput(
         "synthetic_lap",
-        "Designate one lap as Synthetic (optional):",
+        "Designate the composite reference lap (optional):",
         choices = c("None" = "", laps),
-        selected = ""
+        selected = if (length(marked) > 0 && marked[1] %in% laps) marked[1] else ""
       )
     })
     
@@ -286,7 +222,8 @@ run_telemetry_app <- function(
         telemetry(),
         lap_numbers,
         full_throttle_threshold = full_throttle_thr,
-        braking_threshold = braking_thr
+        braking_threshold = braking_thr,
+        lateral_cutoff_hz = input$lateral_cutoff
       )
     })
     
@@ -314,7 +251,8 @@ run_telemetry_app <- function(
           title = "Lap Statistics",
           subtitle = paste0(
             "Base thresholds  Full Throttle: ", input$full_throttle_threshold, "%, ",
-            "Brake: ", input$braking_threshold, "%"
+            "Brake: ", input$braking_threshold, "%  |  Lateral G filter: ",
+            if (input$lateral_cutoff > 0) paste0(input$lateral_cutoff, " Hz low-pass") else "none"
           )
         ) |>
         gt::opt_interactive(use_pagination = TRUE, pagination_type = "jump")
@@ -333,7 +271,7 @@ run_telemetry_app <- function(
       }
       
       subtitle_txt <- if (length(syn) > 0) {
-        paste0(included, " laps included. Synthetic lap excluded: ", paste(syn, collapse = ", "))
+        paste0(included, " laps included. Composite reference lap excluded: ", paste(syn, collapse = ", "))
       } else {
         paste0(included, " laps included")
       }
@@ -369,7 +307,7 @@ run_telemetry_app <- function(
         scale_x_continuous(breaks = df$Lap)+
         labs(
           title = paste0("Lap trend: ", input$trend_metric),
-          subtitle = if (length(syn) > 0) paste0("Synthetic lap excluded: ", paste(syn, collapse = ", ")) else NULL,
+          subtitle = if (length(syn) > 0) paste0("Composite reference lap excluded: ", paste(syn, collapse = ", ")) else NULL,
           x = "Lap",
           y = input$trend_metric
         ) +
